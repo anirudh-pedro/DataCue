@@ -69,7 +69,6 @@ uploads/
 *.csv
 *.xlsx
 *.xls
-*.json
 
 # OS files
 Thumbs.db
@@ -80,3 +79,54 @@ test_*.py
 *_test.py
 tests/
 test/
+test_exports/
+test_preferences.json
+
+# Temporary/Generated files
+exports/
+generated_*.json
+phase*_dashboard_config.json
+dashboard_config.json
+*.html
+*.png
+*.pdf
+
+# Backup files
+*.bak
+*.backup
+*.old
+*~
+
+# Jupyter Notebook outputs
+*.ipynb
+
+# Documentation build files
+docs/_build/
+docs/.doctrees/
+site/
+
+# Configuration files (keep .gitignore itself)
+!.gitignore
+
+# API keys and secrets
+secrets.json
+config.json
+settings.json
+
+# Windows specific
+desktop.ini
+$RECYCLE.BIN/
+
+# macOS specific
+.AppleDouble
+.LSOverride
+._*
+
+# System monitoring
+.monitor
+
+# FastAPI specific
+*.pid
+instance/
+*.session
+
