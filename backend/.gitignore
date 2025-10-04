@@ -1,49 +1,136 @@
+# ================================
 # Python
+# ================================
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+*.pyc
 .Python
 
-# Virtual Environment
+# ================================
+# Virtual Environments
+# ================================
 venv/
 env/
 ENV/
-.venv
+.venv/
+virtualenv/
+.virtualenv/
 
-# IDE
+# ================================
+# IDE / Editors
+# ================================
+# VSCode
 .vscode/
+*.code-workspace
+
+# PyCharm / IntelliJ
 .idea/
+*.iml
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
 *.swp
 *.swo
 *~
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# ================================
+# Operating Systems
+# ================================
+# macOS
 .DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
 
-# Jupyter Notebook
-.ipynb_checkpoints
+# Windows
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+*.lnk
 
-# Environment variables
+# Linux
+.directory
+
+# ================================
+# Environment Variables & Secrets
+# ================================
 .env
+.env.*
 .env.local
-.env.*.local
+.env.production
+.env.development
+*.env
 
+# API Keys & Secrets
+secrets.json
+config.json
+settings.json
+credentials.json
+*.key
+*.pem
+*.crt
+
+# ================================
+# Data Files (Optional - Uncomment if needed)
+# ================================
+# Uncomment to ignore data files:
+# *.csv
+# *.xlsx
+# *.xls
+# *.json
+# *.parquet
+# *.feather
+uploads/
+data/raw/
+data/temp/
+
+# ================================
 # Database
+# ================================
 *.db
 *.sqlite
 *.sqlite3
+*.db-journal
 
+# ================================
 # Logs
+# ================================
 *.log
 logs/
+*.log.*
+log/
 
+# ================================
 # Testing
+# ================================
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
 .tox/
+.nox/
+.hypothesis/
+pytest_debug.log
+coverage.xml
+*.cover
+.cache
+nosetests.xml
 
-# Distribution / packaging
-.Python
+# ================================
+# Distribution / Packaging
+# ================================
 build/
 develop-eggs/
 dist/
@@ -56,77 +143,112 @@ parts/
 sdist/
 var/
 wheels/
+share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
-# Package manager
+MANIFEST
 pip-log.txt
 pip-delete-this-directory.txt
 
-# Uploaded files (if any)
-uploads/
-*.csv
-*.xlsx
-*.xls
+# ================================
+# Jupyter Notebook
+# ================================
+.ipynb_checkpoints
+*.ipynb
+# Keep example notebooks:
+!example*.ipynb
 
-# OS files
-Thumbs.db
-.DS_Store
+# ================================
+# Knowledge Agent Generated Files
+# ================================
+# Generated Reports
+example_eda_report.html
+example_eda_report.md
+*_report.html
+*_report.md
 
-# Test files
-test_*.py
-*_test.py
-tests/
-test/
-test_exports/
-test_preferences.json
-
-# Temporary/Generated files
-exports/
-generated_*.json
-phase*_dashboard_config.json
-dashboard_config.json
+# Generated Visualizations
+exports/*.html
+exports/*.png
+exports/*.pdf
+exports/*.svg
 *.html
 *.png
 *.pdf
+*.svg
+# Keep template files:
+!templates/*.html
 
-# Backup files
+# Generated Data
+conversation_history.json
+user_feedback.json
+example_insights.json
+feedback_history.json
+*_feedback.json
+*_history.json
+
+# Generated Configs
+dashboard_config.json
+phase*_dashboard_config.json
+generated_*.json
+
+# ================================
+# Temporary / Cache Files
+# ================================
+*.tmp
+*.temp
+tmp/
+temp/
+.cache/
 *.bak
 *.backup
 *.old
-*~
+~*
 
-# Jupyter Notebook outputs
-*.ipynb
+# ================================
+# Documentation
+# ================================
+# Uncomment to ignore generated docs:
+# *.md
+# !README.md
 
 # Documentation build files
 docs/_build/
 docs/.doctrees/
 site/
+_build/
+.doctrees/
 
-# Configuration files (keep .gitignore itself)
-!.gitignore
-
-# API keys and secrets
-secrets.json
-config.json
-settings.json
-
-# Windows specific
-desktop.ini
-$RECYCLE.BIN/
-
-# macOS specific
-.AppleDouble
-.LSOverride
-._*
-
-# System monitoring
-.monitor
-
-# FastAPI specific
+# ================================
+# FastAPI / Web Frameworks
+# ================================
 *.pid
 instance/
 *.session
+.uvicorn/
+
+# ================================
+# System Monitoring
+# ================================
+.monitor
+
+# ================================
+# Git
+# ================================
+*.orig
+*.rej
+
+# ================================
+# Project Specific
+# ================================
+# Test files
+test_exports/
+test_preferences.json
+test_*.json
+
+# Keep important files
+!.gitignore
+!requirements.txt
+!.env.example
 
