@@ -2,7 +2,13 @@
 
 from fastapi import FastAPI
 
-from routers import dashboard_router, ingestion_router, knowledge_router, prediction_router
+from routers import (
+    dashboard_router,
+    ingestion_router,
+    knowledge_router,
+    orchestrator_router,
+    prediction_router,
+)
 from shared.config import get_config
 
 app = FastAPI(
@@ -15,6 +21,7 @@ app.include_router(ingestion_router.router)
 app.include_router(dashboard_router.router)
 app.include_router(knowledge_router.router)
 app.include_router(prediction_router.router)
+app.include_router(orchestrator_router.router)
 
 
 @app.get("/")

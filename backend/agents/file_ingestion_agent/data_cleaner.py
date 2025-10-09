@@ -153,8 +153,10 @@ class DataCleaner:
             
             # Try to convert to numeric
             try:
-                df[col] = pd.to_numeric(df[col], errors='ignore')
-            except:
+                converted_numeric = pd.to_numeric(df[col], errors='coerce')
+                if converted_numeric.notna().any():
+                    df[col] = df[col].where(converted_numeric.isna(), converted_numeric)
+            except Exception:
                 pass
             
             # Try to convert to datetime if it looks like a date
@@ -163,8 +165,10 @@ class DataCleaner:
                     # Sample first non-null value
                     sample = df[col].dropna().iloc[0] if len(df[col].dropna()) > 0 else None
                     if sample and any(char in str(sample) for char in ['-', '/', ':']):
-                        df[col] = pd.to_datetime(df[col], errors='ignore')
-                except:
+                        converted_datetime = pd.to_datetime(df[col], errors='coerce', utc=False)
+                        if converted_datetime.notna().any():
+                            df[col] = df[col].where(converted_datetime.isna(), converted_datetime)
+                except Exception:
                     pass
         
         return df

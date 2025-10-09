@@ -28,6 +28,21 @@ backend/
 │   └── prediction_agent/
 ├── core/
 │   └── config.py               # Centralised .env loading and settings helper
+├── main.py                     # FastAPI entry point wiring every agent
+├── routers/
+│   ├── ingestion_router.py
+│   ├── dashboard_router.py
+│   ├── knowledge_router.py
+│   ├── prediction_router.py
+│   └── orchestrator_router.py  # NEW: single-click pipeline endpoint
+├── services/
+│   ├── ingestion_service.py
+│   ├── dashboard_service.py
+│   ├── knowledge_service.py
+│   ├── prediction_service.py
+│   └── orchestrator_service.py # NEW: orchestrates all agents together
+├── models/
+│   └── registry.py             # Mongo/File backed model registry
 ├── ARCHITECTURE_DIAGRAM.md     # Platform architecture overview
 ├── COMPLETE_BUILD_SUMMARY.md   # Change log & statistics
 ├── requirements.txt            # Consolidated dependencies
@@ -68,11 +83,39 @@ Required keys:
 | Variable       | Purpose                                                                                             |
 | -------------- | --------------------------------------------------------------------------------------------------- |
 | `GROQ_API_KEY` | Enables Groq LLM narratives inside the Knowledge Agent (auto-populated from `groq_api` if present). |
-| `MONGO_URI`    | Connection string for future persistence integrations (currently optional).                         |
+| `MONGO_URI`    | Connection string for persistence (MongoDB). Optional locally; required for shared registry.        |
+
+> 🔐 **Rotate credentials before production**
+>
+> • Create fresh Groq & MongoDB API keys/users for each environment (dev/staging/prod).
+>
+> • Store them in a secrets manager (Azure Key Vault, AWS Secrets Manager, etc.) and inject via deployment pipeline.
+>
+> • Never commit the `.env` file—use environment variables or templates like `.env.example` instead.
 
 The default `.env` file contains example values – replace them with your own secrets before deploying.
 
 ---
+
+## ▶️ One-Click Orchestrator Pipeline
+
+Want to upload a dataset and trigger every agent in a single call? Use the new `/orchestrator/pipeline` endpoint.
+
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+```bash
+curl -X POST "http://localhost:8000/orchestrator/pipeline" \
+    -F "file=@data/sample.csv" \
+    -F "target_column=label" \
+    -F "dashboard_type=overview" \
+    -F "generate_dashboard_insights=false" \
+    -F "knowledge_generate_insights=false" \
+    -F "prediction_options_json={\"problem_type\":\"classification\"}"
+```
+
+The response summarises ingestion status, generated dashboard metadata, knowledge-agent summary, and (when a target column is supplied) the newly registered production model.
 
 ## ▶️ Running the Prediction API (Agent 4)
 
