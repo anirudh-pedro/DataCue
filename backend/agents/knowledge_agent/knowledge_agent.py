@@ -13,6 +13,7 @@ from .insight_generator import InsightGenerator
 from .query_engine import QueryEngine
 from .recommendation_engine import RecommendationEngine
 from .report_generator import ReportGenerator
+from core.config import get_settings
 
 
 class KnowledgeAgent:
@@ -34,8 +35,11 @@ class KnowledgeAgent:
         Args:
             groq_api_key: Optional Groq API key for LLM-powered features
         """
+        settings = get_settings()
+        resolved_api_key = groq_api_key or settings.groq_api_key
+
         self.profiler = DataProfiler()
-        self.insight_generator = InsightGenerator(api_key=groq_api_key)
+        self.insight_generator = InsightGenerator(api_key=resolved_api_key)
         self.query_engine = QueryEngine()
         self.recommendation_engine = RecommendationEngine()
         self.report_generator = ReportGenerator()
@@ -212,7 +216,7 @@ class KnowledgeAgent:
             'quality_score': f"{quality['overall_quality_score']:.1f}/100 ({quality['quality_grade']})",
             'missing_data': f"{basic['total_missing_values']:,} values ({basic['missing_percentage']:.2f}%)",
             'duplicates': f"{basic['duplicate_rows']:,} rows",
-            'strong_correlations': correlations['num_strong_correlations'],
+            'strong_correlations': correlations.get('num_strong_correlations', 0),
             'column_types': basic['column_types'],
             'analysis_complete': self.analysis_complete
         }

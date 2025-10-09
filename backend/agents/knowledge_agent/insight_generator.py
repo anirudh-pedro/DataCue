@@ -5,10 +5,14 @@ from data profiling results.
 """
 
 import json
+import logging
 from typing import Dict, List, Any, Optional
 import pandas as pd
 import numpy as np
 from datetime import datetime
+
+
+logger = logging.getLogger(__name__)
 
 
 class InsightGenerator:
@@ -46,7 +50,8 @@ class InsightGenerator:
                 "Groq library not installed. Install with: pip install groq"
             )
         except Exception as e:
-            raise Exception(f"Failed to initialize Groq client: {str(e)}")
+            logger.warning("Groq client initialization failed: %s", e)
+            self.groq_client = None
     
     def generate_insights(
         self, 

@@ -3,10 +3,11 @@ Prediction API
 FastAPI endpoints for model training, prediction, and explanation.
 """
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
+import re
 import numpy as np
 import pandas as pd
 import pickle
@@ -58,10 +59,19 @@ class PredictResponse(BaseModel):
     model_id: str
     timestamp: str
 
+
+def _normalise_dataset_name(name: str) -> str:
+    """Return a filesystem-safe dataset name."""
+
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_")
+    return slug or "dataset"
+
 # Global model registry (in production, use database)
 MODEL_REGISTRY: Dict[str, Any] = {}
 MODELS_DIR = Path("./saved_models")
-MODELS_DIR.mkdir(exist_ok=True)
+DATASETS_DIR = Path("./data")
+MODELS_DIR.mkdir(parents=True, exist_ok=True)
+DATASETS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @app.get("/")
@@ -74,11 +84,40 @@ async def root():
     }
 
 
-@app.post("/train", response_model=TrainResponse)
-async def train_model(
-    request: TrainRequest,
-    background_tasks: BackgroundTasks
+@app.post("/datasets/upload")
+async def upload_dataset(
+    file: UploadFile = File(..., description="CSV dataset to store on the server"),
+    dataset_name: Optional[str] = Form(None, description="Optional dataset name override")
 ):
+    """Persist an uploaded CSV dataset to the shared data directory."""
+
+    if not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only CSV uploads are currently supported")
+
+    name_source = dataset_name or file.filename.rsplit(".", 1)[0]
+    safe_name = _normalise_dataset_name(name_source)
+    target_path = DATASETS_DIR / f"{safe_name}.csv"
+
+    contents = await file.read()
+    target_path.write_bytes(contents)
+
+    return {
+        "status": "success",
+        "dataset_name": safe_name,
+        "path": str(target_path.resolve())
+    }
+
+
+@app.get("/datasets")
+async def list_datasets():
+    """Return all available datasets that can be used for training."""
+
+    datasets = [p.stem for p in DATASETS_DIR.glob("*.csv")]
+    return {"datasets": datasets, "total": len(datasets)}
+
+
+@app.post("/train", response_model=TrainResponse)
+async def train_model(request: TrainRequest):
     """
     Train a new ML model.
     
@@ -97,8 +136,8 @@ async def train_model(
         
         # Load dataset (simplified - in production, implement proper data loading)
         # For now, assume data is uploaded separately
-        data_path = f"./data/{request.dataset_name}.csv"
-        if not Path(data_path).exists():
+        data_path = DATASETS_DIR / f"{request.dataset_name}.csv"
+        if not data_path.exists():
             raise HTTPException(status_code=404, detail=f"Dataset {request.dataset_name} not found")
         
         data = pd.read_csv(data_path)
@@ -118,7 +157,7 @@ async def train_model(
         # Generate model ID
         from datetime import datetime
         model_id = f"model_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        
+
         # Save model
         model_path = MODELS_DIR / f"{model_id}.pkl"
         with open(model_path, 'wb') as f:

@@ -1,173 +1,161 @@
-# DataCue - AI-Powered Data Analysis Platform
+# DataCue Backend – Four-Agent AI Analytics Platform
 
-Backend service for DataCue, an intelligent data ingestion and analysis system.
+This backend powers the DataCue platform: a modular analytics stack with **File Ingestion**, **Dashboard Generation**, **Knowledge (Conversational) Analytics**, and **Prediction (ML) Agents**.
 
-## Features
+---
 
-### File Ingestion Agent
+## 🚀 Capabilities at a Glance
 
-- **File Support**: CSV, Excel (.xlsx, .xls) with multi-sheet support
-- **Data Cleaning**: Automatic standardization, missing value handling, duplicate removal
-- **Advanced Metadata Extraction**:
-  - Chart recommendations per column
-  - Time series detection
-  - High cardinality detection
-  - Smart column role classification
-  - Data quality scoring (0-100)
-  - Correlation analysis
-  - Dataset-level insights
+| Agent                        | Key Skills                                                                           | Primary Modules                                                                                                                          |
+| ---------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **1. File Ingestion**        | Multi-format ingestion, cleaning, rich metadata extraction                           | `ingestion_agent.py`, `data_cleaner.py`, `metadata_extractor.py`                                                                         |
+| **2. Dashboard Generator**   | Auto chart recommendations (13 types), layouting, AI narratives, exports             | `chart_recommender.py`, `layout_manager.py`, `insight_generator.py`                                                                      |
+| **3. Knowledge Agent**       | Natural-language Q&A, anomaly detection, recommendations, Groq-powered narratives    | `knowledge_agent.py`, `query_engine.py`, `recommendation_engine.py`                                                                      |
+| **4. Prediction Agent v2.0** | AutoML across 21 models, hyperparameter tuning, ensembles, SHAP, monitoring, FastAPI | `prediction_agent.py`, `model_selector.py`, `cross_validator.py`, `hyperparameter_tuner.py`, `model_monitor.py`, `api/prediction_api.py` |
 
-## Project Structure
+Supporting docs live under `backend/ARCHITECTURE_DIAGRAM.md`, `V2_ENHANCEMENTS.md`, and `COMPLETE_BUILD_SUMMARY.md`.
+
+---
+
+## 🧱 Project Structure
 
 ```
 backend/
 ├── agents/
-│   └── file_ingestion_agent/
-│       ├── ingestion_agent.py      # Main file processing agent
-│       ├── data_cleaner.py         # Data cleaning logic
-│       └── metadata_extractor.py   # Metadata & advanced features
-├── requirements.txt                 # Python dependencies
-└── test_agent.py                   # Quick verification test
+│   ├── file_ingestion_agent/
+│   ├── dashboard_generator_agent/
+│   ├── knowledge_agent/
+│   └── prediction_agent/
+├── core/
+│   └── config.py               # Centralised .env loading and settings helper
+├── ARCHITECTURE_DIAGRAM.md     # Platform architecture overview
+├── COMPLETE_BUILD_SUMMARY.md   # Change log & statistics
+├── requirements.txt            # Consolidated dependencies
+└── tests/
+        └── test_bootstrap.py       # Smoke tests to ensure modules import
 ```
 
-## Installation
+---
 
-1. Clone the repository:
+## 🛠️ Prerequisites
+
+- **Python 3.11+**
+- **pip** (latest)
+- **Visual C++ Build Tools** (Windows) – required for Prophet / statsmodels compilation
+- (Optional) **cmdstanpy** backend for Prophet → install by running `python -m prophet.models.install` after dependency install
+
+---
+
+## ⚙️ Setup
 
 ```bash
-git clone https://github.com/yourusername/DataCue.git
+git clone https://github.com/anirudh-pedro/DataCue.git
 cd DataCue/backend
-```
 
-2. Create virtual environment:
+python -m venv .venv
+.venv\Scripts\activate  # PowerShell (Windows)
 
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-
-3. Install dependencies:
-
-```bash
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-## Usage
+### Environment Variables
 
-### Basic Usage
+The backend loads `backend/.env` automatically via `core.config.get_settings()`.
 
-```python
-from agents.file_ingestion_agent import FileIngestionAgent
+Required keys:
 
-# Initialize agent
-agent = FileIngestionAgent()
+| Variable       | Purpose                                                                                             |
+| -------------- | --------------------------------------------------------------------------------------------------- |
+| `GROQ_API_KEY` | Enables Groq LLM narratives inside the Knowledge Agent (auto-populated from `groq_api` if present). |
+| `MONGO_URI`    | Connection string for future persistence integrations (currently optional).                         |
 
-# Ingest a file
-result = agent.ingest_file('data.csv')
+The default `.env` file contains example values – replace them with your own secrets before deploying.
 
-# Access results
-if result['status'] == 'success':
-    data = result['data']                    # Cleaned data
-    metadata = result['metadata']            # Complete metadata
-    preview = result['data_preview']         # First 10 rows
-```
+---
 
-### Advanced Features
+## ▶️ Running the Prediction API (Agent 4)
 
-```python
-# Data quality score
-quality = metadata['data_quality_score']
-print(f"Quality: {quality['overall_score']}/100 ({quality['rating']})")
-
-# Chart recommendations
-for col in metadata['columns']:
-    print(f"{col['name']}: {col['chart_recommendations']}")
-    print(f"  Role: {col['suggested_role']['role']}")
-    print(f"  Time Series: {col['is_time_series']['is_time_series']}")
-
-# Correlation analysis
-for cor in metadata['correlation_matrix']['strong_correlations']:
-    print(f"{cor['column1']} ↔ {cor['column2']}: {cor['correlation']}")
-```
-
-### Multi-Sheet Excel Support
-
-```python
-# List all sheets
-sheets = agent.get_excel_sheets('workbook.xlsx')
-
-# Process specific sheet
-result = agent.ingest_file('workbook.xlsx', sheet_name='Sales')
-
-# Process all sheets
-all_results = agent.ingest_excel_all_sheets('workbook.xlsx')
-```
-
-## Testing
-
-Run the verification test:
+1. **Activate the virtual environment** and ensure dependencies are installed.
+2. **Start the FastAPI service**:
 
 ```bash
-python test_agent.py
+uvicorn agents.prediction_agent.api.prediction_api:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-## Features Overview
+3. **Upload a dataset**:
 
-### Data Cleaning
+```bash
+curl -F "file=@data/my_dataset.csv" http://localhost:8000/datasets/upload
+```
 
-- Column name standardization
-- Missing value handling (median/mode/forward fill)
-- Duplicate removal
-- Data type inference
-- Empty row/column removal
+4. **Train a model**:
 
-### Metadata Extraction
+```bash
+curl -X POST http://localhost:8000/train \
+    -H "Content-Type: application/json" \
+    -d '{
+                "dataset_name": "my_dataset",
+                "target_column": "label",
+                "problem_type": "classification",
+                "tune_hyperparameters": true,
+                "create_ensemble": true
+            }'
+```
 
-- **Column Analysis**: Name, type, nulls, unique values
-- **Numeric Stats**: Min, max, mean, median, std, quartiles
-- **Categorical Stats**: Top values, frequencies
-- **Datetime Stats**: Date ranges
-- **Quality Metrics**: Completeness, uniqueness, validity
+5. **Predict / Explain / Monitor** using `/predict`, `/explain`, `/models`, `/health` endpoints.
 
-### Advanced Features
+Datasets are persisted to `./data`, and models to `./saved_models` (directories are auto-created).
 
-- **Chart Recommendations**: Auto-suggest appropriate visualizations
-- **Time Series Detection**: Identify temporal columns
-- **Column Roles**: Classify as measure, dimension, identifier, etc.
-- **Data Quality Score**: 0-100 rating with component breakdown
-- **Correlation Matrix**: Detect relationships between numeric columns
-- **Smart Insights**: Dataset-level recommendations
+---
 
-## Dependencies
+## 📚 Examples & Usage
 
-- pandas >= 2.3.2
-- numpy >= 2.3.3
-- openpyxl >= 3.1.2
-- fastapi >= 0.116.1
-- uvicorn >= 0.35.0
-- python-multipart >= 0.0.20
+- `agents/prediction_agent/example_v2_enhanced_features.py` – showcases cross-validation, tuning, ensembles, time series, and monitoring.
+- `agents/knowledge_agent/example_usage.ipynb` (coming soon) – explore conversational analytics.
+- Dashboard agent README includes configuration details for chart customization and exports.
 
-## License
+---
 
-MIT License
+## ✅ Smoke Tests
 
-## Contributing
+Run the bundled bootstrap checks:
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
 
-## Roadmap
+These tests confirm the critical agents import correctly and that environment configuration is wired up.
 
-- [ ] Dashboard Generator Agent
-- [ ] Knowledge Agent (AI-powered querying)
-- [ ] FastAPI REST endpoints
-- [ ] MongoDB integration
-- [ ] React frontend
-- [ ] Export to PDF/Excel/HTML
+---
 
-## Authors
+## 📦 Key Dependencies
 
-DataCue Team
+- Core analytics: `pandas`, `numpy`, `scikit-learn`, `xgboost`, `statsmodels`, `prophet`
+- Explainability & monitoring: `shap`, `optuna`, `imbalanced-learn`, `tqdm`
+- API layer: `fastapi`, `uvicorn`, `python-dotenv`
+- Visualization & docs: `plotly`, `matplotlib`, `reportlab`
+- LLM integration: `groq`
 
-## Acknowledgments
+All pinned versions are listed in `requirements.txt`. Use `agents/prediction_agent/requirements_prediction.txt` when deploying the prediction service independently.
 
-Built with Python, FastAPI, and modern data science libraries.
+---
+
+## 🤝 Contributing
+
+1. Fork the repo & create a feature branch
+2. Ensure tests (`pytest`) pass locally
+3. Submit a PR with a summary of changes
+
+---
+
+## 📄 License
+
+MIT © DataCue Team
+
+---
+
+## 🙌 Acknowledgements
+
+Built with Python, FastAPI, scikit-learn, XGBoost, Prophet, and the Groq LLM ecosystem.

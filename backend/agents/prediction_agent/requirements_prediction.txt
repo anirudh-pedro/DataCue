@@ -2,35 +2,35 @@
 # Install with: pip install -r requirements_prediction.txt
 
 # Core Machine Learning
-scikit-learn>=1.3.0
-numpy>=1.24.0
-pandas>=2.0.0
-scipy>=1.11.0
+scikit-learn==1.5.2
+numpy==2.3.3
+pandas==2.3.2
+scipy==1.14.1
 
 # Gradient Boosting (High Performance)
-xgboost>=2.0.0
+xgboost==2.1.2
 
 # Explainability (Highly Recommended)
-shap>=0.42.0
+shap==0.44.1
 
 # ========================================
 # NEW ENHANCEMENTS
 # ========================================
 
 # Hyperparameter Tuning
-optuna>=3.3.0              # Bayesian optimization for hyperparameter tuning
+optuna==3.6.1              # Bayesian optimization for hyperparameter tuning
 
 # Imbalanced Data Handling
-imbalanced-learn>=0.11.0   # SMOTE, ADASYN, and other sampling techniques
+imbalanced-learn==0.12.3   # SMOTE, ADASYN, and other sampling techniques
 
 # Time Series Forecasting
-statsmodels>=0.14.0        # ARIMA, SARIMA, Exponential Smoothing
-prophet>=1.1.0             # Facebook Prophet for time series forecasting
+statsmodels==0.14.4        # ARIMA, SARIMA, Exponential Smoothing
+prophet==1.1.5             # Facebook Prophet for time series forecasting
 
 # FastAPI & Async Web Framework
-fastapi>=0.104.0           # Modern web framework for ML APIs
-uvicorn>=0.24.0            # ASGI server for FastAPI
-pydantic>=2.0.0            # Data validation
+fastapi==0.116.1           # Modern web framework for ML APIs
+uvicorn==0.35.0            # ASGI server for FastAPI
+pydantic==2.11.9           # Data validation
 
 # Optional: Additional ML Libraries
 # lightgbm>=4.0.0          # Fast gradient boosting (alternative to XGBoost)
@@ -55,11 +55,11 @@ pydantic>=2.0.0            # Data validation
 # eli5>=0.13.0          # Another interpretation library
 
 # Visualization (for plotting)
-matplotlib>=3.7.0
-seaborn>=0.12.0
+matplotlib==3.10.6
+seaborn==0.13.2
 
 # Progress bars
-tqdm>=4.65.0
+tqdm==4.66.5
 
 # Utilities
-joblib>=1.3.0         # Model serialization (included in scikit-learn)
+joblib==1.4.2         # Model serialization (included in scikit-learn)
