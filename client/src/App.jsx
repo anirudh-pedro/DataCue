@@ -1,15 +1,13 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+﻿import Navbar from './components/Navbar';
+import ChatPage from './pages/ChatPage';
 
 function App() {
-
   return (
-    <>
-      <h1 className='text-3xl font-bold'>DataCue</h1>
-    </>
-  )
+    <div className="h-screen flex flex-col bg-black">
+      <Navbar />
+      <ChatPage />
+    </div>
+  );
 }
 
-export default App
+export default App;
