@@ -405,7 +405,7 @@ occupying {basic['memory_usage_mb']:.2f} MB of memory. The overall data quality 
         findings.append(f"Overall data quality: {quality['quality_grade']}")
         
         # Strong correlations
-        num_correlations = profile_data['correlations']['num_strong_correlations']
+        num_correlations = profile_data.get('correlations', {}).get('num_strong_correlations', 0)
         if num_correlations > 0:
             findings.append(f"Detected {num_correlations} strong variable correlations")
         

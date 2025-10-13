@@ -5,11 +5,11 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from services.knowledge_service import KnowledgeService
+from services.knowledge_service import get_shared_service
 from shared.utils import clean_response
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
-service = KnowledgeService()
+service = get_shared_service()
 
 
 class KnowledgeAnalyseRequest(BaseModel):
@@ -35,6 +35,23 @@ def analyze_dataset(payload: KnowledgeAnalyseRequest):
 @router.post("/ask")
 def ask_question(payload: AskQuestionRequest):
     result = service.ask(question=payload.question)
+    if not result.get("success", True):
+        raise HTTPException(status_code=400, detail=result.get("error") or "Unable to answer question")
+    return clean_response(result)
+
+
+class VisualQueryRequest(BaseModel):
+    question: str = Field(..., description="Natural language question that may benefit from a chart")
+    request_chart: bool = Field(default=True, description="Whether to generate a chart if applicable")
+
+
+@router.post("/ask-visual")
+def ask_visual_question(payload: VisualQueryRequest):
+    """
+    Answer questions with optional chart generation for visual insights.
+    Returns both text answer and chart (if applicable).
+    """
+    result = service.ask_visual(question=payload.question, generate_chart=payload.request_chart)
     if not result.get("success", True):
         raise HTTPException(status_code=400, detail=result.get("error") or "Unable to answer question")
     return clean_response(result)

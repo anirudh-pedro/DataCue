@@ -13,8 +13,10 @@ import numpy as np
 from scipy import stats
 from typing import Dict, List, Tuple, Any, Optional
 import warnings
+import logging
 
 warnings.filterwarnings('ignore')
+logger = logging.getLogger(__name__)
 
 
 class DataProfiler:
@@ -169,55 +171,70 @@ class DataProfiler:
         Analyze correlations between numeric variables.
         Returns both Pearson and Spearman correlations.
         """
-        numeric_data = data.select_dtypes(include=[np.number])
-        
-        if numeric_data.shape[1] < 2:
+        try:
+            numeric_data = data.select_dtypes(include=[np.number])
+            
+            if numeric_data.shape[1] < 2:
+                return {
+                    'pearson_matrix': {},
+                    'spearman_matrix': {},
+                    'strong_correlations': [],
+                    'correlation_pairs': [],
+                    'num_strong_correlations': 0
+                }
+            
+            # Calculate correlation matrices
+            pearson_corr = numeric_data.corr(method='pearson')
+            spearman_corr = numeric_data.corr(method='spearman')
+            
+            # Find strong correlations
+            strong_correlations = []
+            correlation_pairs = []
+            
+            for i in range(len(pearson_corr.columns)):
+                for j in range(i + 1, len(pearson_corr.columns)):
+                    col1 = pearson_corr.columns[i]
+                    col2 = pearson_corr.columns[j]
+                    pearson_val = pearson_corr.iloc[i, j]
+                    spearman_val = spearman_corr.iloc[i, j]
+                    
+                    # Skip NaN correlations
+                    if pd.isna(pearson_val) or pd.isna(spearman_val):
+                        continue
+                    
+                    if abs(pearson_val) > self.correlation_threshold or abs(spearman_val) > self.correlation_threshold:
+                        strong_correlations.append({
+                            'variable_1': col1,
+                            'variable_2': col2,
+                            'pearson': float(pearson_val),
+                            'spearman': float(spearman_val),
+                            'strength': 'strong' if abs(pearson_val) > 0.8 else 'moderate',
+                            'direction': 'positive' if pearson_val > 0 else 'negative'
+                        })
+                    
+                    correlation_pairs.append({
+                        'variable_1': col1,
+                        'variable_2': col2,
+                        'pearson': float(pearson_val),
+                        'spearman': float(spearman_val)
+                    })
+            
+            return {
+                'pearson_matrix': pearson_corr.to_dict(),
+                'spearman_matrix': spearman_corr.to_dict(),
+                'strong_correlations': strong_correlations,
+                'correlation_pairs': correlation_pairs[:50],  # Limit to top 50
+                'num_strong_correlations': len(strong_correlations)
+            }
+        except Exception as e:
+            logger.error(f"Error analyzing correlations: {str(e)}")
             return {
                 'pearson_matrix': {},
                 'spearman_matrix': {},
                 'strong_correlations': [],
-                'correlation_pairs': []
+                'correlation_pairs': [],
+                'num_strong_correlations': 0
             }
-        
-        # Calculate correlation matrices
-        pearson_corr = numeric_data.corr(method='pearson')
-        spearman_corr = numeric_data.corr(method='spearman')
-        
-        # Find strong correlations
-        strong_correlations = []
-        correlation_pairs = []
-        
-        for i in range(len(pearson_corr.columns)):
-            for j in range(i + 1, len(pearson_corr.columns)):
-                col1 = pearson_corr.columns[i]
-                col2 = pearson_corr.columns[j]
-                pearson_val = pearson_corr.iloc[i, j]
-                spearman_val = spearman_corr.iloc[i, j]
-                
-                if abs(pearson_val) > self.correlation_threshold or abs(spearman_val) > self.correlation_threshold:
-                    strong_correlations.append({
-                        'variable_1': col1,
-                        'variable_2': col2,
-                        'pearson': float(pearson_val),
-                        'spearman': float(spearman_val),
-                        'strength': 'strong' if abs(pearson_val) > 0.8 else 'moderate',
-                        'direction': 'positive' if pearson_val > 0 else 'negative'
-                    })
-                
-                correlation_pairs.append({
-                    'variable_1': col1,
-                    'variable_2': col2,
-                    'pearson': float(pearson_val),
-                    'spearman': float(spearman_val)
-                })
-        
-        return {
-            'pearson_matrix': pearson_corr.to_dict(),
-            'spearman_matrix': spearman_corr.to_dict(),
-            'strong_correlations': strong_correlations,
-            'correlation_pairs': correlation_pairs[:50],  # Limit to top 50
-            'num_strong_correlations': len(strong_correlations)
-        }
     
     def _detect_outliers(self, data: pd.DataFrame) -> Dict[str, Any]:
         """
@@ -419,7 +436,7 @@ Missing Values: {basic['total_missing_values']:,} ({basic['missing_percentage']:
 
 Quality Score: {quality['overall_quality_score']:.1f}/100 ({quality['quality_grade']})
 
-Strong Correlations: {self.profile_data['correlations']['num_strong_correlations']}
-Key Variables Identified: {len(self.profile_data['key_variables']['potential_targets'])} potential targets
+Strong Correlations: {self.profile_data.get('correlations', {}).get('num_strong_correlations', 0)}
+Key Variables Identified: {len(self.profile_data.get('key_variables', {}).get('potential_targets', []))} potential targets
 """
         return summary.strip()

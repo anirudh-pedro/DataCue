@@ -144,16 +144,54 @@ class FileIngestionAgent:
             )
         
         if file_extension == '.csv':
-            # Try different encodings for CSV
+            # Try different encodings and delimiters for CSV
             encodings = ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']
+            delimiters = [',', ';', '\t', '|']
+            
             for encoding in encodings:
-                try:
-                    df = pd.read_csv(file_path, encoding=encoding)
-                    logger.info(f"CSV read successfully with encoding: {encoding}")
+                for delimiter in delimiters:
+                    try:
+                        # Try with error handling for malformed lines
+                        df = pd.read_csv(
+                            file_path, 
+                            encoding=encoding,
+                            delimiter=delimiter,
+                            on_bad_lines='skip',  # Skip bad lines instead of failing
+                            engine='python'  # More flexible parser
+                        )
+                        
+                        # Validate that we got meaningful data
+                        if len(df.columns) > 0 and len(df) > 0:
+                            logger.info(f"CSV read successfully with encoding: {encoding}, delimiter: '{delimiter}'")
+                            return df
+                    except (UnicodeDecodeError, pd.errors.ParserError):
+                        continue
+                    except Exception as e:
+                        logger.debug(f"Failed with encoding {encoding}, delimiter '{delimiter}': {str(e)}")
+                        continue
+            
+            # If all combinations fail, try with automatic delimiter detection
+            try:
+                df = pd.read_csv(
+                    file_path,
+                    encoding='utf-8',
+                    sep=None,  # Auto-detect delimiter
+                    engine='python',
+                    on_bad_lines='skip'
+                )
+                if len(df.columns) > 0 and len(df) > 0:
+                    logger.info("CSV read successfully with auto-detected delimiter")
                     return df
-                except UnicodeDecodeError:
-                    continue
-            raise ValueError("Unable to read CSV with supported encodings")
+            except Exception as e:
+                logger.error(f"Auto-detection also failed: {str(e)}")
+            
+            raise ValueError(
+                "Unable to read CSV file. Please ensure your file:\n"
+                "1. Has a valid header row\n"
+                "2. Uses consistent delimiters (comma, semicolon, or tab)\n"
+                "3. Has the same number of columns in all rows\n"
+                "4. Doesn't have corrupted or incomplete rows"
+            )
         
         elif file_extension in ['.xlsx', '.xls']:
             # Read Excel file with optional sheet specification
@@ -170,6 +208,81 @@ class FileIngestionAgent:
         
         else:
             raise ValueError(f"Unsupported file format: {file_extension}")
+    
+    def diagnose_csv(self, file_path: str) -> Dict[str, Any]:
+        """
+        Diagnose issues with a problematic CSV file
+        
+        Args:
+            file_path: Path to the CSV file
+            
+        Returns:
+            Diagnostic information about the CSV
+        """
+        try:
+            file_path = Path(file_path)
+            
+            # Read first few lines as text
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = [f.readline().strip() for _ in range(5)]
+            
+            # Analyze line structure
+            line_analysis = []
+            for i, line in enumerate(lines, 1):
+                comma_count = line.count(',')
+                semicolon_count = line.count(';')
+                tab_count = line.count('\t')
+                pipe_count = line.count('|')
+                
+                line_analysis.append({
+                    "line_number": i,
+                    "commas": comma_count,
+                    "semicolons": semicolon_count,
+                    "tabs": tab_count,
+                    "pipes": pipe_count,
+                    "length": len(line)
+                })
+            
+            # Determine likely delimiter
+            delimiters = {
+                'comma': sum(l['commas'] for l in line_analysis),
+                'semicolon': sum(l['semicolons'] for l in line_analysis),
+                'tab': sum(l['tabs'] for l in line_analysis),
+                'pipe': sum(l['pipes'] for l in line_analysis)
+            }
+            likely_delimiter = max(delimiters, key=delimiters.get)
+            
+            return {
+                "status": "diagnostic",
+                "first_lines": lines[:3],
+                "line_analysis": line_analysis,
+                "likely_delimiter": likely_delimiter,
+                "delimiter_counts": delimiters,
+                "suggestion": f"Your CSV appears to use '{likely_delimiter}' as delimiter. "
+                             f"Line consistency: {self._check_line_consistency(line_analysis)}"
+            }
+            
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"Could not diagnose file: {str(e)}"
+            }
+    
+    def _check_line_consistency(self, line_analysis: list) -> str:
+        """Check if all lines have consistent delimiter counts"""
+        if not line_analysis:
+            return "Unable to determine"
+        
+        # Get most common delimiter
+        first_line = line_analysis[0]
+        delimiter_keys = ['commas', 'semicolons', 'tabs', 'pipes']
+        max_key = max(delimiter_keys, key=lambda k: first_line[k])
+        
+        counts = [line[max_key] for line in line_analysis]
+        if len(set(counts)) == 1:
+            return f"✅ Consistent ({counts[0]} {max_key} per line)"
+        else:
+            return f"❌ Inconsistent ({min(counts)}-{max(counts)} {max_key} per line)"
     
     def validate_file(self, file_path: str) -> Dict[str, Any]:
         """
@@ -215,6 +328,14 @@ class FileIngestionAgent:
             }
             
         except Exception as e:
+            # If validation fails, provide diagnostic info
+            if file_path.suffix.lower() == '.csv':
+                diagnostic = self.diagnose_csv(str(file_path))
+                return {
+                    "valid": False,
+                    "message": f"Validation failed: {str(e)}",
+                    "diagnostic": diagnostic
+                }
             return {
                 "valid": False,
                 "message": f"Validation failed: {str(e)}"

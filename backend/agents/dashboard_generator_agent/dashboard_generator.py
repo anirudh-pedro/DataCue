@@ -151,18 +151,26 @@ class DashboardGenerator:
             "categorical": []
         }
         
-        columns_meta = metadata.get('columns_metadata', {})
+        # Get columns metadata - it's a list, not a dict
+        columns_list = metadata.get('columns', [])
         
-        for col_name, col_meta in columns_meta.items():
-            role = col_meta.get('suggested_role', 'dimension')
-            col_type = str(col_meta.get('type', ''))
+        for col_meta in columns_list:
+            col_name = col_meta.get('name')
+            if not col_name:
+                continue
+                
+            # Get role from suggested_role dict
+            role_info = col_meta.get('suggested_role', {})
+            role = role_info.get('role', 'unknown') if isinstance(role_info, dict) else 'unknown'
+            
+            col_type = str(col_meta.get('data_type', ''))
             
             # By role
             if role == "identifier":
                 classification["identifiers"].append(col_name)
             elif role == "measure":
                 classification["measures"].append(col_name)
-            elif role == "dimension":
+            elif role in ["dimension", "unknown"]:
                 classification["dimensions"].append(col_name)
             elif role == "time_dimension":
                 classification["time_dimensions"].append(col_name)
@@ -173,8 +181,9 @@ class DashboardGenerator:
             elif 'object' in col_type or 'string' in col_type:
                 classification["categorical"].append(col_name)
             
-            # High cardinality
-            if col_meta.get('is_high_cardinality', False):
+            # High cardinality - it's a dict with is_high_cardinality key
+            hc_info = col_meta.get('is_high_cardinality', {})
+            if isinstance(hc_info, dict) and hc_info.get('is_high_cardinality', False):
                 classification["high_cardinality"].append(col_name)
         
         return classification
@@ -193,15 +202,28 @@ class DashboardGenerator:
         """
         charts = []
         
+        # Debug logging
+        logger.info(f"Classification: {classification}")
+        logger.info(f"Measures: {classification['measures']}")
+        logger.info(f"Dimensions: {classification['dimensions']}")
+        logger.info(f"Numeric: {classification['numeric']}")
+        logger.info(f"Time dimensions: {classification['time_dimensions']}")
+        
         # 1. Overview Charts (KPIs for measures)
-        for measure in classification["measures"][:5]:  # Limit to first 5 measures
+        measures_for_kpi = classification["measures"][:5]
+        logger.info(f"Creating KPIs for: {measures_for_kpi}")
+        for measure in measures_for_kpi:  # Limit to first 5 measures
             chart = self._create_kpi_card(data, measure, metadata)
             if chart:
                 charts.append(chart)
+                logger.info(f"Created KPI for {measure}")
         
         # 2. Distribution Charts (Histograms for numeric)
-        for numeric_col in classification["numeric"][:4]:
+        numeric_for_hist = classification["numeric"][:4]
+        logger.info(f"Creating histograms for: {numeric_for_hist}")
+        for numeric_col in numeric_for_hist:
             col_meta = self._get_column_metadata(metadata, numeric_col)
+            logger.info(f"Column {numeric_col} metadata: chart_recs={col_meta.get('chart_recommendations', []) if col_meta else 'NO META'}")
             if col_meta and 'histogram' in col_meta.get('chart_recommendations', []):
                 chart = self.chart_factory.create_histogram(
                     data, numeric_col, col_meta
@@ -210,10 +232,14 @@ class DashboardGenerator:
                     chart = self._add_insights_to_chart(chart, data)
                 if chart:
                     charts.append(chart)
+                    logger.info(f"Created histogram for {numeric_col}")
         
         # 3. Categorical Charts (Bar charts for dimensions)
-        for dim in classification["dimensions"][:4]:
+        dims_for_bar = classification["dimensions"][:4]
+        logger.info(f"Creating bar charts for dimensions: {dims_for_bar}")
+        for dim in dims_for_bar:
             col_meta = self._get_column_metadata(metadata, dim)
+            logger.info(f"Dimension {dim} has metadata: {col_meta is not None}")
             if col_meta:
                 chart = self.chart_factory.create_bar_chart(
                     data, dim, col_meta
@@ -222,6 +248,7 @@ class DashboardGenerator:
                     chart = self._add_insights_to_chart(chart, data)
                 if chart:
                     charts.append(chart)
+                    logger.info(f"Created bar chart for {dim}")
         
         # 4. Time Series Charts
         if classification["time_dimensions"]:
@@ -512,10 +539,13 @@ class DashboardGenerator:
     
     def _get_column_metadata(self, metadata: Dict[str, Any], col_name: str) -> Optional[Dict[str, Any]]:
         """
-        Get metadata for a specific column
+        Get metadata for a specific column (searches columns list)
         """
-        columns_meta = metadata.get('columns_metadata', {})
-        return columns_meta.get(col_name, None)
+        columns_list = metadata.get('columns', [])
+        for col_meta in columns_list:
+            if col_meta.get('name') == col_name:
+                return col_meta
+        return None
     
     def _generate_dashboard_id(self) -> str:
         """
