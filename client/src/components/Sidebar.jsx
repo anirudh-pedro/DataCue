@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { FiMessageSquare, FiFile, FiPlus, FiTrash2, FiChevronLeft, FiChevronRight } from 'react-icons/fi';
+﻿import { useState } from 'react';
+import { FiMessageSquare, FiFile, FiPlus, FiTrash2, FiChevronLeft, FiChevronRight, FiMenu } from 'react-icons/fi';
 
 const Sidebar = () => {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [activeChat, setActiveChat] = useState(null);
   const [hoveredChat, setHoveredChat] = useState(null);
 
@@ -19,97 +20,139 @@ const Sidebar = () => {
   };
 
   return (
-    <div 
-      className={`bg-black border-r border-gray-800 flex flex-col transition-all duration-300 ${
-        isCollapsed ? 'w-16' : 'w-64'
-      }`}
-    >
-      {/* Header */}
-      <div className="p-4 border-b border-gray-800 flex items-center justify-between">
-        {!isCollapsed && (
-          <h2 className="text-lg font-semibold text-white">Chats</h2>
-        )}
-        <button
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="p-2 hover:bg-gray-900 rounded-lg transition-colors text-white"
-          title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        >
-          {isCollapsed ? <FiChevronRight /> : <FiChevronLeft />}
-        </button>
-      </div>
+    <>
+      <button
+        onClick={() => setIsMobileOpen(!isMobileOpen)}
+        className="md:hidden fixed top-3 left-3 z-50 p-2 bg-gray-900 hover:bg-gray-800 rounded-lg text-white transition-colors cursor-pointer"
+      >
+        <FiMenu className="text-xl" />
+      </button>
 
-      {/* New Chat Button */}
-      <div className="p-3">
-        <button className="w-full flex items-center justify-center space-x-2 bg-white hover:bg-gray-200 text-black px-4 py-3 rounded-lg font-medium transition-all">
-          <FiPlus className="text-lg" />
-          {!isCollapsed && <span>New Chat</span>}
-        </button>
-      </div>
+      {isMobileOpen && (
+        <div
+          className="md:hidden fixed inset-0 bg-black/50 z-40 cursor-pointer"
+          onClick={() => setIsMobileOpen(false)}
+        />
+      )}
 
-      {/* Chat History */}
-      <div className="flex-1 overflow-y-auto px-2" style={{ scrollbarWidth: 'thin', scrollbarColor: '#4B5563 #000000' }}>
-        {chatHistory.map((chat) => (
-          <div
-            key={chat.id}
-            onClick={() => setActiveChat(chat.id)}
-            onMouseEnter={() => setHoveredChat(chat.id)}
-            onMouseLeave={() => setHoveredChat(null)}
-            className={`
-              group relative mb-2 rounded-lg cursor-pointer transition-all
-              ${activeChat === chat.id 
-                ? 'bg-gray-900 border border-gray-700' 
-                : 'hover:bg-gray-900/50 border border-transparent'
-              }
-            `}
+      <div 
+        className={`
+          bg-black border-r border-gray-800 flex flex-col transition-all duration-300
+          fixed md:relative inset-y-0 left-0 z-40
+          ${isCollapsed ? 'w-14' : 'w-60'}
+          ${isMobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+        `}
+      >
+        <div className={`
+          p-3 border-b border-gray-800 flex items-center
+          ${isCollapsed ? 'justify-center' : 'justify-between'}
+        `}>
+          {!isCollapsed && (
+            <h2 className="text-sm font-semibold text-white">Chats</h2>
+          )}
+          <button
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            className="p-2 hover:bg-gray-900 rounded-lg transition-colors text-white flex items-center justify-center cursor-pointer"
+            title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
-            <div className="flex items-center p-3">
+            {isCollapsed ? (
+              <FiChevronRight className="text-base" />
+            ) : (
+              <FiChevronLeft className="text-base" />
+            )}
+          </button>
+        </div>
+
+        <div className="p-2">
+          <button 
+            className={`
+              w-full flex items-center justify-center gap-2
+              bg-white hover:bg-gray-200 text-black 
+              rounded-xl font-medium transition-all cursor-pointer
+              ${isCollapsed ? 'h-12 w-12' : 'px-4 py-3'}
+            `}
+            title="New Chat"
+          >
+            <FiPlus className={`${isCollapsed ? 'text-xl' : 'text-xl'}`} strokeWidth={2} />
+            {!isCollapsed && <span className="text-sm">New Chat</span>}
+          </button>
+        </div>
+
+        <div 
+          className="flex-1 overflow-y-auto px-2"
+          style={{ 
+            scrollbarWidth: 'thin', 
+            scrollbarColor: '#4B5563 #000000' 
+          }}
+        >
+          {chatHistory.map((chat) => (
+            <div
+              key={chat.id}
+              onClick={() => {
+                setActiveChat(chat.id);
+                setIsMobileOpen(false);
+              }}
+              onMouseEnter={() => setHoveredChat(chat.id)}
+              onMouseLeave={() => setHoveredChat(null)}
+              className={`
+                group relative mb-2 rounded-lg cursor-pointer transition-all
+                ${activeChat === chat.id 
+                  ? 'bg-gray-900 border border-gray-700' 
+                  : 'hover:bg-gray-900/50 border border-transparent'
+                }
+              `}
+            >
               <div className={`
-                flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center
-                ${chat.type === 'file' ? 'bg-gray-800' : 'bg-gray-800'}
+                flex items-center p-3
+                ${isCollapsed ? 'justify-center' : ''}
               `}>
-                {chat.type === 'file' ? (
-                  <FiFile className="text-white text-sm" />
-                ) : (
-                  <FiMessageSquare className="text-white text-sm" />
+                <div className={`
+                  flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center
+                  ${chat.type === 'file' ? 'bg-gray-800' : 'bg-gray-800'}
+                `}>
+                  {chat.type === 'file' ? (
+                    <FiFile className="text-white text-sm" />
+                  ) : (
+                    <FiMessageSquare className="text-white text-sm" />
+                  )}
+                </div>
+
+                {!isCollapsed && (
+                  <div className="ml-3 flex-1 min-w-0">
+                    <p className="text-sm font-medium text-white truncate">
+                      {chat.name}
+                    </p>
+                    <p className="text-xs text-gray-400 truncate">
+                      {chat.lastMessage}
+                    </p>
+                  </div>
+                )}
+
+                {!isCollapsed && hoveredChat === chat.id && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteChat(chat.id);
+                    }}
+                    className="ml-2 p-1.5 hover:bg-red-900/20 rounded transition-colors opacity-0 group-hover:opacity-100 cursor-pointer"
+                  >
+                    <FiTrash2 className="text-red-500 text-sm" />
+                  </button>
                 )}
               </div>
-
-              {!isCollapsed && (
-                <div className="ml-3 flex-1 min-w-0">
-                  <p className="text-sm font-medium text-white truncate">
-                    {chat.name}
-                  </p>
-                  <p className="text-xs text-gray-400 truncate">
-                    {chat.lastMessage}
-                  </p>
-                </div>
-              )}
-
-              {!isCollapsed && hoveredChat === chat.id && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDeleteChat(chat.id);
-                  }}
-                  className="ml-2 p-1.5 hover:bg-red-900/20 rounded transition-colors opacity-0 group-hover:opacity-100"
-                >
-                  <FiTrash2 className="text-red-500 text-sm" />
-                </button>
-              )}
             </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Footer */}
-      {!isCollapsed && (
-        <div className="p-4 border-t border-gray-800">
-          <p className="text-xs text-gray-400 text-center">
-            {chatHistory.length} conversations
-          </p>
+          ))}
         </div>
-      )}
-    </div>
+
+        {!isCollapsed && (
+          <div className="p-3 border-t border-gray-800">
+            <p className="text-xs text-gray-400 text-center">
+              {chatHistory.length} conversations
+            </p>
+          </div>
+        )}
+      </div>
+    </>
   );
 };
 
