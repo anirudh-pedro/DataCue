@@ -1,13 +1,15 @@
 ﻿import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import ChatPage from './pages/ChatPage';
 import Dashboard from './pages/Dashboard';
+import Login from './pages/Login';
 
 function App() {
   return (
     <BrowserRouter>
       <div className="h-screen flex flex-col bg-black">
         <Routes>
-          <Route path="/" element={<Navigate to="/chat" replace />} />
+          <Route path="/" element={<Navigate to="/login" replace />} />
+          <Route path="/login" element={<Login />} />
           <Route path="/chat" element={<ChatPage />} />
           <Route path="/dashboard" element={<Dashboard />} />
         </Routes>

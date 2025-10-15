@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
+import Navbar from '../components/Navbar';
 import ChartMessage from '../components/ChartMessage';
 import { FiSend, FiUpload, FiUser } from 'react-icons/fi';
 import { HiSparkles } from 'react-icons/hi2';
@@ -265,6 +266,9 @@ const ChatPage = () => {
           dataset_name: datasetName,
           summary: dashboardData.summary,
           quality_indicators: dashboardData.quality_indicators,
+          metadata_summary: dashboardData.metadata_summary,
+          layout: dashboardData.layout,
+          filters: dashboardData.filters,
         }));
         
         await sleep(500);
@@ -305,10 +309,13 @@ const ChatPage = () => {
   };
 
   return (
-    <div className="flex h-screen bg-black overflow-hidden">
-      <Sidebar />
-      
-      <div className="flex-1 flex flex-col relative">
+    <div className="flex h-screen flex-col bg-black">
+      <Navbar />
+
+      <div className="flex flex-1 overflow-hidden">
+        <Sidebar />
+        
+        <div className="relative flex flex-1 flex-col">
         <input
           ref={fileInputRef}
           type="file"
@@ -540,6 +547,7 @@ const ChatPage = () => {
             </div>
           </>
         )}
+        </div>
       </div>
     </div>
   );

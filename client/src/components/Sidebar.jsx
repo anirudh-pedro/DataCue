@@ -38,7 +38,7 @@ const Sidebar = () => {
       <div 
         className={`
           bg-black border-r border-gray-800 flex flex-col transition-all duration-300
-          fixed md:relative inset-y-0 left-0 z-40
+          fixed md:relative top-16 md:top-0 bottom-0 md:bottom-auto left-0 z-40
           ${isCollapsed ? 'w-14' : 'w-60'}
           ${isMobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
         `}
