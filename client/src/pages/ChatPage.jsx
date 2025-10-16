@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { onAuthStateChanged } from 'firebase/auth';
 import Sidebar from '../components/Sidebar';
 import Navbar from '../components/Navbar';
 import ChartMessage from '../components/ChartMessage';
 import { FiSend, FiUpload, FiUser } from 'react-icons/fi';
 import { HiSparkles } from 'react-icons/hi2';
+import { auth } from '../firebase';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 const STAGE_LABELS = {
@@ -35,6 +37,25 @@ const ChatPage = () => {
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      const otpVerified = sessionStorage.getItem('otpVerified') === 'true';
+      if (!user) {
+        navigate('/login', { replace: true });
+        return;
+      }
+
+      if (!otpVerified) {
+        if (user.email) {
+          sessionStorage.setItem('otpEmail', user.email);
+        }
+        navigate('/verify-otp', { replace: true, state: { email: user.email } });
+      }
+    });
+
+    return () => unsubscribe();
+  }, [navigate]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });

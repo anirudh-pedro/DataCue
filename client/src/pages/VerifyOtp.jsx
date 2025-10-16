@@ -1,0 +1,145 @@
+import { useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth } from '../firebase';
+
+const VerifyOtp = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [email, setEmail] = useState(() => location.state?.email || sessionStorage.getItem('otpEmail') || '');
+  const [otp, setOtp] = useState('');
+  const [statusMessage, setStatusMessage] = useState('An OTP has been sent to your email.');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [secondsRemaining, setSecondsRemaining] = useState(300);
+  const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(/\/+$/, '');
+  const otpEndpointBase = `${apiBaseUrl}/otp`;
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      const otpVerified = sessionStorage.getItem('otpVerified') === 'true';
+      if (!user) {
+        navigate('/login', { replace: true });
+      } else if (otpVerified) {
+        navigate('/chat', { replace: true });
+      } else if (!email && user.email) {
+        setEmail(user.email);
+      }
+    });
+    return unsubscribe;
+  }, [email, navigate]);
+
+  useEffect(() => {
+    if (!secondsRemaining) return;
+    const timer = setInterval(() => {
+      setSecondsRemaining((prev) => Math.max(prev - 1, 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [secondsRemaining]);
+
+  const formattedTimer = () => {
+    const minutes = Math.floor(secondsRemaining / 60);
+    const seconds = secondsRemaining % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
+
+  const resendOtp = async () => {
+    if (!email) return;
+    setIsSubmitting(true);
+    setStatusMessage('Resending OTP…');
+    try {
+      const response = await fetch(`${otpEndpointBase}/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.detail || payload.message || 'Failed to resend OTP');
+      }
+      setStatusMessage('A new OTP has been sent to your email.');
+      setSecondsRemaining(300);
+    } catch (error) {
+      console.error('Failed to resend OTP:', error);
+      setStatusMessage('Failed to resend OTP. Please try again later.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    if (!otp.trim()) {
+      setStatusMessage('Please enter the verification code.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setStatusMessage('Verifying code…');
+    try {
+      const response = await fetch(`${otpEndpointBase}/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, otp: otp.trim() }),
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.success) {
+        throw new Error(payload.message || 'Invalid or expired code.');
+      }
+
+      sessionStorage.setItem('otpVerified', 'true');
+      sessionStorage.setItem('otpEmail', email);
+      navigate('/chat', { replace: true });
+    } catch (error) {
+      console.error('OTP verification failed:', error);
+      setStatusMessage(error.message || 'Failed to verify code.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-[#0d1117] px-4">
+      <div className="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900/80 p-10 text-center shadow-2xl shadow-black/40">
+        <h1 className="text-2xl font-semibold text-white">Verify your email</h1>
+        <p className="mt-3 text-sm text-slate-300">
+          Enter the 6-digit code sent to
+          <span className="ml-1 font-medium text-white">{email}</span>
+        </p>
+        <form onSubmit={handleSubmit} className="mt-8 space-y-4">
+          <input
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={6}
+            value={otp}
+            onChange={(event) => setOtp(event.target.value.replace(/[^0-9]/g, ''))}
+            className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-center text-lg font-semibold tracking-[0.6rem] text-white focus:border-slate-500 focus:outline-none"
+            placeholder="••••••"
+            autoFocus
+          />
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className={`w-full rounded-xl px-4 py-3 text-sm font-semibold transition \
+              ${isSubmitting ? 'bg-slate-700/70 text-slate-300 cursor-not-allowed' : 'bg-white text-slate-900 hover:bg-slate-200'}`}
+          >
+            {isSubmitting ? 'Verifying…' : 'Verify code'}
+          </button>
+        </form>
+        <p className="mt-4 text-xs text-slate-400">{statusMessage}</p>
+        <button
+          type="button"
+          onClick={resendOtp}
+          disabled={isSubmitting || secondsRemaining > 0}
+          className="mt-6 text-xs font-semibold text-sky-400 disabled:text-slate-600"
+        >
+          {secondsRemaining > 0 ? `Resend code in ${formattedTimer()}` : 'Resend code'}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+export default VerifyOtp;

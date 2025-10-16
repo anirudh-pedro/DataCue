@@ -1,0 +1,9 @@
+{
+  "name": "datacue-email-service",
+  "version": "1.0.1",
+  "description": "Legacy stub. OTP delivery now handled by FastAPI backend.",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  }
+}

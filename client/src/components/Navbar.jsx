@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { 
   FiBook, 
   FiFileText, 
@@ -9,14 +9,35 @@ import {
   FiLogOut,
   FiChevronDown 
 } from 'react-icons/fi';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { auth } from '../firebase';
+import { useNavigate } from 'react-router-dom';
 
 const Navbar = () => {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [user, setUser] = useState(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+    });
+    return unsubscribe;
+  }, []);
 
   const toggleTheme = () => {
     setIsDarkMode(!isDarkMode);
     document.documentElement.classList.toggle('dark');
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await signOut(auth);
+      navigate('/login', { replace: true });
+    } catch (error) {
+      console.error('Failed to sign out:', error);
+    }
   };
 
   return (
@@ -75,10 +96,24 @@ const Navbar = () => {
             className="flex items-center space-x-1.5 hover:bg-gray-900 px-2 py-1.5 rounded-lg transition-all duration-200"
           >
             <div className="w-7 h-7 bg-gray-700 rounded-full flex items-center justify-center">
-              <FiUser className="text-white text-base" />
+              {user?.photoURL ? (
+                <img
+                  src={user.photoURL}
+                  alt="Profile"
+                  className="h-7 w-7 rounded-full object-cover"
+                  referrerPolicy="no-referrer"
+                  loading="lazy"
+                  onError={(event) => {
+                    event.currentTarget.onerror = null;
+                    event.currentTarget.src = '/logo.png';
+                  }}
+                />
+              ) : (
+                <FiUser className="text-white text-base" />
+              )}
             </div>
             <div className="hidden sm:block text-left">
-              <p className="text-xs font-semibold text-white">User</p>
+              <p className="text-xs font-semibold text-white">{user?.displayName || 'User'}</p>
             </div>
             <FiChevronDown className={`text-gray-400 text-sm transition-transform duration-200 ${isProfileOpen ? 'rotate-180' : ''}`} />
           </button>
@@ -88,7 +123,7 @@ const Navbar = () => {
             <div className="absolute right-0 mt-2 w-56 bg-gray-900 rounded-xl shadow-xl border border-gray-800 py-2 animate-fadeIn">
               <div className="px-4 py-3 border-b border-gray-800">
                 <p className="text-sm font-semibold text-white">User Account</p>
-                <p className="text-xs text-gray-400 mt-1">user@datacue.ai</p>
+                <p className="text-xs text-gray-400 mt-1">{user?.email || 'user@datacue.ai'}</p>
               </div>
               <a
                 href="/profile"
@@ -106,6 +141,7 @@ const Navbar = () => {
               </a>
               <hr className="my-2 border-gray-800" />
               <button
+                onClick={handleSignOut}
                 className="flex items-center space-x-3 px-4 py-2.5 hover:bg-red-900/20 transition-colors w-full text-left"
               >
                 <FiLogOut className="text-red-500" />

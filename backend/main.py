@@ -7,6 +7,7 @@ from routers import (
     dashboard_router,
     ingestion_router,
     knowledge_router,
+    otp_router,
     orchestrator_router,
     prediction_router,
 )
@@ -34,6 +35,7 @@ app.include_router(dashboard_router.router)
 app.include_router(knowledge_router.router)
 app.include_router(prediction_router.router)
 app.include_router(orchestrator_router.router)
+app.include_router(otp_router.router)
 
 
 @app.get("/")

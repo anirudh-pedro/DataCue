@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { onAuthStateChanged } from 'firebase/auth';
 import BarChart from '../components/charts/BarChart';
 import LineChart from '../components/charts/LineChart';
 import ScatterPlot from '../components/charts/ScatterPlot';
@@ -11,6 +12,7 @@ import PlotCard from '../components/charts/PlotCard';
 import KpiCard from '../components/KpiCard';
 import { HiSparkles } from 'react-icons/hi2';
 import { FiArrowLeft, FiX } from 'react-icons/fi';
+import { auth } from '../firebase';
 
 const chartRegistry = {
   bar: { component: BarChart, mode: 'plotly' },
@@ -71,6 +73,26 @@ const Dashboard = () => {
   const [layout, setLayout] = useState(null);
   const [fullscreenChart, setFullscreenChart] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      const otpVerified = sessionStorage.getItem('otpVerified') === 'true';
+
+      if (!user) {
+        navigate('/login', { replace: true });
+        return;
+      }
+
+      if (!otpVerified) {
+        if (user.email) {
+          sessionStorage.setItem('otpEmail', user.email);
+        }
+        navigate('/verify-otp', { replace: true, state: { email: user.email } });
+      }
+    });
+
+    return () => unsubscribe();
+  }, [navigate]);
 
   useEffect(() => {
     setLoading(true);

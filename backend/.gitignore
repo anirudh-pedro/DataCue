@@ -81,7 +81,7 @@ credentials.json
 *.key
 *.pem
 *.crt
-
+.env.example
 # ================================
 # Data Files (Optional - Uncomment if needed)
 # ================================
