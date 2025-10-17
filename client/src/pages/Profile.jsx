@@ -70,20 +70,10 @@ const Profile = () => {
               </h1>
               <p className="mt-1 text-sm text-slate-300">{user.email}</p>
             </div>
-            <div className="mt-6 grid w-full grid-cols-1 gap-6 text-left sm:grid-cols-2">
+            <div className="mt-6 grid w-full grid-cols-1 gap-4 text-left">
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-                <p className="text-xs uppercase tracking-wide text-slate-400">User ID</p>
-                <p className="mt-2 break-all text-sm font-medium text-white">{user.uid}</p>
-              </div>
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-                <p className="text-xs uppercase tracking-wide text-slate-400">Email Verified</p>
-                <p className="mt-2 text-sm font-medium text-white">{user.emailVerified ? 'Yes' : 'No'}</p>
-              </div>
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-                <p className="text-xs uppercase tracking-wide text-slate-400">Provider</p>
-                <p className="mt-2 text-sm font-medium text-white">
-                  {user.providerData?.[0]?.providerId || 'Unknown'}
-                </p>
+                <p className="text-xs uppercase tracking-wide text-slate-400">Email Status</p>
+                <p className="mt-2 text-sm font-medium text-white">{user.emailVerified ? 'Verified' : 'Pending verification'}</p>
               </div>
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
                 <p className="text-xs uppercase tracking-wide text-slate-400">Last Login</p>

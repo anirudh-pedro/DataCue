@@ -8,8 +8,7 @@ const Login = () => {
   const navigate = useNavigate();
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(/\/+$/, '');
-  const otpEndpointBase = `${apiBaseUrl}/otp`;
+  const emailServiceUrl = import.meta.env.VITE_EMAIL_SERVICE_URL ?? 'http://localhost:4000';
 
   useEffect(() => {
     const handleRedirectResult = async () => {
@@ -51,7 +50,7 @@ const Login = () => {
   }, [navigate]);
 
   const sendOtp = async (email) => {
-  const response = await fetch(`${otpEndpointBase}/send`, {
+  const response = await fetch(`${emailServiceUrl.replace(/\/$/, '')}/send-otp`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email }),

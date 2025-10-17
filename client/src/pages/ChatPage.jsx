@@ -34,15 +34,51 @@ const ChatPage = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStatusMessage, setUploadStatusMessage] = useState('');
   const [hasDashboard, setHasDashboard] = useState(false);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [sessionId, setSessionId] = useState(() => localStorage.getItem('chatSessionId'));
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
+  const sessionReady = Boolean(sessionId && currentUser && !isLoadingHistory);
+
+  const generateMessageId = () => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    return Math.random().toString(36).slice(2, 12);
+  };
+
+  const persistMessage = async (message) => {
+    if (!sessionId || !currentUser) {
+      return;
+    }
+
+    try {
+      await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${sessionId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: message.id,
+          role: message.role,
+          content: message.content,
+          timestamp: message.timestamp,
+          chart: message.chart,
+          metadata: message.metadata,
+          showDashboardButton: Boolean(message.showDashboardButton),
+        }),
+      });
+    } catch (error) {
+      console.error('Failed to persist chat message:', error);
+    }
+  };
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       const otpVerified = sessionStorage.getItem('otpVerified') === 'true';
       if (!user) {
         navigate('/login', { replace: true });
+        setCurrentUser(null);
         return;
       }
 
@@ -51,18 +87,119 @@ const ChatPage = () => {
           sessionStorage.setItem('otpEmail', user.email);
         }
         navigate('/verify-otp', { replace: true, state: { email: user.email } });
+        setCurrentUser(null);
+        return;
       }
+
+      setCurrentUser(user);
     });
 
     return () => unsubscribe();
   }, [navigate]);
 
   useEffect(() => {
+    const loadHistory = async (activeSessionId) => {
+      try {
+        const response = await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${activeSessionId}/messages`);
+        if (!response.ok) {
+          throw new Error('Failed to load chat history.');
+        }
+        const payload = await response.json();
+        const history = Array.isArray(payload.messages)
+          ? payload.messages.map((message) => ({
+              id: message.id || generateMessageId(),
+              role: message.role,
+              content: message.content,
+              timestamp: message.timestamp,
+              chart: message.chart,
+              metadata: message.metadata || {},
+              showDashboardButton: Boolean(message.showDashboardButton),
+            }))
+          : [];
+
+        setMessages(history);
+        setHasDashboard(history.some((message) => message.showDashboardButton));
+        return true;
+      } catch (error) {
+        console.error('Failed to load chat history:', error);
+        setMessages([]);
+        setHasDashboard(Boolean(sessionStorage.getItem('dashboardData')));
+        localStorage.removeItem('chatSessionId');
+        localStorage.removeItem('chatSessionUserId');
+        return false;
+      }
+    };
+
+    const createNewSession = async (user) => {
+      const response = await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: user.uid,
+          email: user.email,
+          display_name: user.displayName,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to create chat session.');
+      }
+
+      const payload = await response.json();
+      const newSessionId = payload.session_id;
+      localStorage.setItem('chatSessionId', newSessionId);
+      localStorage.setItem('chatSessionUserId', user.uid);
+      setSessionId(newSessionId);
+      setMessages([]);
+      setHasDashboard(Boolean(sessionStorage.getItem('dashboardData')));
+    };
+
+    const initialiseSession = async (user) => {
+      setIsLoadingHistory(true);
+      try {
+        const storedSessionId = localStorage.getItem('chatSessionId');
+        const storedUserId = localStorage.getItem('chatSessionUserId');
+
+        if (storedSessionId && storedUserId === user.uid) {
+          const loaded = await loadHistory(storedSessionId);
+          if (loaded) {
+            setSessionId(storedSessionId);
+            return;
+          }
+        }
+
+        await createNewSession(user);
+      } catch (error) {
+        console.error('Failed to initialise chat session:', error);
+      } finally {
+        setIsLoadingHistory(false);
+      }
+    };
+
+    if (currentUser) {
+      initialiseSession(currentUser);
+    } else {
+      setSessionId(null);
+      setMessages([]);
+      setIsLoadingHistory(false);
+    }
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser]);
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
 
-  const appendMessage = (message) => {
-    setMessages((prev) => [...prev, message]);
+  const appendMessage = (message, options = {}) => {
+    const messageWithId = message.id ? message : { ...message, id: generateMessageId() };
+    setMessages((prev) => [...prev, messageWithId]);
+
+    if (options.persist !== false) {
+      persistMessage(messageWithId);
+    }
+
+    return messageWithId;
   };
 
   const buildTimestamp = () => new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
@@ -101,7 +238,7 @@ const ChatPage = () => {
   };
 
   const handleSendMessage = async () => {
-    if (!inputMessage.trim() || isUploading) return;
+    if (!inputMessage.trim() || isUploading || !sessionReady) return;
 
     const userContent = inputMessage;
     const userMessage = {
@@ -191,7 +328,7 @@ const ChatPage = () => {
   };
 
   const handleUploadClick = () => {
-    if (isUploading) return;
+    if (isUploading || !sessionReady) return;
     fileInputRef.current?.click();
   };
 
@@ -209,6 +346,10 @@ const ChatPage = () => {
     if (!file) return;
 
     event.target.value = '';
+
+    if (!sessionReady) {
+      return;
+    }
 
     setIsUploading(true);
     setUploadStatusMessage('📁 Uploading dataset…');
@@ -344,8 +485,14 @@ const ChatPage = () => {
           className="hidden"
           onChange={handleFileChange}
         />
-        {isUploading && (
+        {isLoadingHistory && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm">
+            <div className="w-12 h-12 border-4 border-gray-700 border-t-white rounded-full animate-spin" aria-hidden="true" />
+            <p className="mt-4 text-sm text-gray-300">Loading your conversation…</p>
+          </div>
+        )}
+        {isUploading && (
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm">
             <div className="w-12 h-12 border-4 border-gray-700 border-t-white rounded-full animate-spin" aria-hidden="true" />
             <p className="mt-4 text-sm text-gray-300 text-center whitespace-pre-line">
               {uploadStatusMessage || DEFAULT_STAGE_MESSAGE}
@@ -383,9 +530,11 @@ const ChatPage = () => {
                 {/* Upload Button */}
                 <button
                   onClick={handleUploadClick}
-                  disabled={isUploading}
-                  className="flex-shrink-0 p-2 text-gray-400 hover:text-white transition-colors rounded-lg hover:bg-gray-800"
-                  title="Upload file"
+                  disabled={isUploading || !sessionReady}
+                  className={`flex-shrink-0 p-2 rounded-lg transition-colors ${
+                    sessionReady ? 'text-gray-400 hover:text-white hover:bg-gray-800' : 'text-gray-600 cursor-not-allowed'
+                  }`}
+                  title={sessionReady ? 'Upload file' : 'Waiting for chat session'}
                 >
                   <FiUpload className="text-xl" />
                 </button>
@@ -396,9 +545,12 @@ const ChatPage = () => {
                   value={inputMessage}
                   onChange={handleInputChange}
                   onKeyPress={handleKeyPress}
-                  placeholder="Message DataCue"
+                  placeholder={sessionReady ? 'Message DataCue' : 'Loading your conversation…'}
                   rows="1"
-                  className="flex-1 bg-transparent text-white placeholder-gray-500 focus:outline-none resize-none overflow-y-auto text-base leading-6 py-2"
+                  disabled={!sessionReady}
+                  className={`flex-1 bg-transparent placeholder-gray-500 focus:outline-none resize-none overflow-y-auto text-base leading-6 py-2 ${
+                    sessionReady ? 'text-white' : 'text-gray-500 cursor-not-allowed'
+                  }`}
                   style={{
                     maxHeight: '200px',
                     scrollbarWidth: 'thin',
@@ -409,13 +561,13 @@ const ChatPage = () => {
                 {/* Send Button */}
                 <button
                   onClick={handleSendMessage}
-                  disabled={!inputMessage.trim() || isUploading}
+                  disabled={!inputMessage.trim() || isUploading || !sessionReady}
                   className={`flex-shrink-0 p-2 rounded-lg transition-all ${
-                    inputMessage.trim()
+                    inputMessage.trim() && sessionReady
                       ? 'bg-white text-black hover:bg-gray-200'
                       : 'text-gray-600 cursor-not-allowed'
                   }`}
-                  title="Send message"
+                  title={sessionReady ? 'Send message' : 'Waiting for chat session'}
                 >
                   <FiSend className="text-xl" />
                 </button>
@@ -522,9 +674,11 @@ const ChatPage = () => {
                   {/* Upload Button */}
                   <button
                     onClick={handleUploadClick}
-                    disabled={isUploading}
-                    className="flex-shrink-0 p-2 text-gray-400 hover:text-white transition-colors rounded-lg hover:bg-gray-800"
-                    title="Upload file"
+                    disabled={isUploading || !sessionReady}
+                    className={`flex-shrink-0 p-2 rounded-lg transition-colors ${
+                      sessionReady ? 'text-gray-400 hover:text-white hover:bg-gray-800' : 'text-gray-600 cursor-not-allowed'
+                    }`}
+                    title={sessionReady ? 'Upload file' : 'Waiting for chat session'}
                   >
                     <FiUpload className="text-xl" />
                   </button>
@@ -535,9 +689,12 @@ const ChatPage = () => {
                     value={inputMessage}
                     onChange={handleInputChange}
                     onKeyPress={handleKeyPress}
-                    placeholder="Message DataCue"
+                    placeholder={sessionReady ? 'Message DataCue' : 'Loading your conversation…'}
                     rows="1"
-                    className="flex-1 bg-transparent text-white placeholder-gray-500 focus:outline-none resize-none overflow-y-auto text-base leading-6 py-2"
+                    disabled={!sessionReady}
+                    className={`flex-1 bg-transparent placeholder-gray-500 focus:outline-none resize-none overflow-y-auto text-base leading-6 py-2 ${
+                      sessionReady ? 'text-white' : 'text-gray-500 cursor-not-allowed'
+                    }`}
                     style={{
                       maxHeight: '200px',
                       scrollbarWidth: 'thin',
@@ -548,13 +705,13 @@ const ChatPage = () => {
                   {/* Send Button */}
                   <button
                     onClick={handleSendMessage}
-                    disabled={!inputMessage.trim() || isUploading}
+                    disabled={!inputMessage.trim() || isUploading || !sessionReady}
                     className={`flex-shrink-0 p-2 rounded-lg transition-all ${
-                      inputMessage.trim()
+                      inputMessage.trim() && sessionReady
                         ? 'bg-white text-black hover:bg-gray-200'
                         : 'text-gray-600 cursor-not-allowed'
                     }`}
-                    title="Send message"
+                    title={sessionReady ? 'Send message' : 'Waiting for chat session'}
                   >
                     <FiSend className="text-xl" />
                   </button>

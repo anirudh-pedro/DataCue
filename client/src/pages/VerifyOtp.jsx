@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 
 const VerifyOtp = () => {
@@ -11,8 +11,7 @@ const VerifyOtp = () => {
   const [statusMessage, setStatusMessage] = useState('An OTP has been sent to your email.');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [secondsRemaining, setSecondsRemaining] = useState(300);
-  const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(/\/+$/, '');
-  const otpEndpointBase = `${apiBaseUrl}/otp`;
+  const emailServiceUrl = (import.meta.env.VITE_EMAIL_SERVICE_URL ?? 'http://localhost:4000').replace(/\/$/, '');
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -47,7 +46,7 @@ const VerifyOtp = () => {
     setIsSubmitting(true);
     setStatusMessage('Resending OTP…');
     try {
-      const response = await fetch(`${otpEndpointBase}/send`, {
+      const response = await fetch(`${emailServiceUrl}/send-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
@@ -55,7 +54,7 @@ const VerifyOtp = () => {
 
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.detail || payload.message || 'Failed to resend OTP');
+        throw new Error(payload.message || 'Failed to resend OTP');
       }
       setStatusMessage('A new OTP has been sent to your email.');
       setSecondsRemaining(300);
@@ -77,7 +76,7 @@ const VerifyOtp = () => {
     setIsSubmitting(true);
     setStatusMessage('Verifying code…');
     try {
-      const response = await fetch(`${otpEndpointBase}/verify`, {
+      const response = await fetch(`${emailServiceUrl}/verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, otp: otp.trim() }),
@@ -97,6 +96,17 @@ const VerifyOtp = () => {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleCancel = async () => {
+    sessionStorage.removeItem('otpVerified');
+    sessionStorage.removeItem('otpEmail');
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error('Sign-out failed during OTP cancel:', error);
+    }
+    navigate('/login', { replace: true });
   };
 
   return (
@@ -126,6 +136,13 @@ const VerifyOtp = () => {
               ${isSubmitting ? 'bg-slate-700/70 text-slate-300 cursor-not-allowed' : 'bg-white text-slate-900 hover:bg-slate-200'}`}
           >
             {isSubmitting ? 'Verifying…' : 'Verify code'}
+          </button>
+          <button
+            type="button"
+            onClick={handleCancel}
+            className="w-full rounded-xl border border-slate-700 bg-transparent px-4 py-3 text-sm font-semibold text-slate-300 transition hover:border-slate-500 hover:text-white"
+          >
+            Cancel and go back
           </button>
         </form>
         <p className="mt-4 text-xs text-slate-400">{statusMessage}</p>
