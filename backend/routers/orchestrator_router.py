@@ -33,6 +33,7 @@ async def run_pipeline(
     knowledge_generate_insights: bool = Form(default=False),
     knowledge_generate_recommendations: bool = Form(default=False),
     prediction_options_json: Optional[str] = Form(default=None, description="JSON object with extra prediction options"),
+    chat_session_id: Optional[str] = Form(default=None, description="Associated chat session identifier"),
 ):
     try:
         contents = await file.read()
@@ -61,6 +62,7 @@ async def run_pipeline(
             dashboard_options=dashboard_options,
             knowledge_options=knowledge_options,
             prediction_options=prediction_options,
+            session_id=chat_session_id,
         )
         return clean_response(result)
     except HTTPException:
@@ -80,6 +82,7 @@ async def create_pipeline_session(
     knowledge_generate_insights: bool = Form(default=False),
     knowledge_generate_recommendations: bool = Form(default=False),
     prediction_options_json: Optional[str] = Form(default=None, description="JSON object with extra prediction options"),
+    chat_session_id: Optional[str] = Form(default=None, description="Associated chat session identifier"),
 ):
     contents = await file.read()
 
@@ -106,6 +109,7 @@ async def create_pipeline_session(
             "generate_recommendations": knowledge_generate_recommendations,
         },
         "prediction_options": prediction_options,
+        "chat_session_id": chat_session_id,
     }
 
     async with _SESSION_LOCK:
@@ -150,6 +154,7 @@ async def stream_pipeline(session_id: str):
                 dashboard_options=session["dashboard_options"],
                 knowledge_options=session["knowledge_options"],
                 prediction_options=session["prediction_options"],
+                session_id=session.get("chat_session_id"),
                 status_callback=status_callback,
             )
             await queue.put({"stage": "pipeline_complete", "payload": clean_response(result)})

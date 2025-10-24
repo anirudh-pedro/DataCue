@@ -16,10 +16,12 @@ class KnowledgeAnalyseRequest(BaseModel):
     data: List[Dict[str, Any]] = Field(..., description="Dataset records")
     generate_insights: bool = Field(default=True)
     generate_recommendations: bool = Field(default=True)
+    session_id: Optional[str] = Field(default=None, description="Chat session identifier")
 
 
 class AskQuestionRequest(BaseModel):
     question: str = Field(..., description="Natural language question about the dataset")
+    session_id: Optional[str] = Field(default=None, description="Chat session identifier")
 
 
 @router.post("/analyze")
@@ -28,13 +30,14 @@ def analyze_dataset(payload: KnowledgeAnalyseRequest):
         data=payload.data,
         generate_insights=payload.generate_insights,
         generate_recommendations=payload.generate_recommendations,
+        session_id=payload.session_id,
     )
     return clean_response(result)
 
 
 @router.post("/ask")
 def ask_question(payload: AskQuestionRequest):
-    result = service.ask(question=payload.question)
+    result = service.ask(question=payload.question, session_id=payload.session_id)
     if not result.get("success", True):
         raise HTTPException(status_code=400, detail=result.get("error") or "Unable to answer question")
     return clean_response(result)
@@ -43,6 +46,7 @@ def ask_question(payload: AskQuestionRequest):
 class VisualQueryRequest(BaseModel):
     question: str = Field(..., description="Natural language question that may benefit from a chart")
     request_chart: bool = Field(default=True, description="Whether to generate a chart if applicable")
+    session_id: Optional[str] = Field(default=None, description="Chat session identifier")
 
 
 @router.post("/ask-visual")
@@ -51,12 +55,16 @@ def ask_visual_question(payload: VisualQueryRequest):
     Answer questions with optional chart generation for visual insights.
     Returns both text answer and chart (if applicable).
     """
-    result = service.ask_visual(question=payload.question, generate_chart=payload.request_chart)
+    result = service.ask_visual(
+        question=payload.question,
+        session_id=payload.session_id,
+        generate_chart=payload.request_chart,
+    )
     if not result.get("success", True):
         raise HTTPException(status_code=400, detail=result.get("error") or "Unable to answer question")
     return clean_response(result)
 
 
 @router.get("/summary")
-def get_summary():
-    return clean_response(service.summary())
+def get_summary(session_id: Optional[str] = None):
+    return clean_response(service.summary(session_id=session_id))

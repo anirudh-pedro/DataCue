@@ -262,7 +262,11 @@ const ChatPage = () => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ question: userContent, request_chart: true }),
+        body: JSON.stringify({
+          question: userContent,
+          request_chart: true,
+          session_id: sessionId,
+        }),
       });
 
       if (!response.ok) {
@@ -362,6 +366,9 @@ const ChatPage = () => {
       formData.append('generate_dashboard_insights', 'true');
       formData.append('knowledge_generate_insights', 'true');
       formData.append('knowledge_generate_recommendations', 'true');
+      if (sessionId) {
+        formData.append('chat_session_id', sessionId);
+      }
 
       const sessionResponse = await fetch(`${API_BASE_URL}/orchestrator/pipeline/session`, {
         method: 'POST',
@@ -589,9 +596,10 @@ const ChatPage = () => {
                   if (msg.role === 'chart') {
                     return (
                       <ChartMessage
-                        key={index}
+                        key={msg.id || index}
                         chart={msg.chart}
                         timestamp={msg.timestamp}
+                        messageId={msg.id}
                       />
                     );
                   }
@@ -599,7 +607,7 @@ const ChatPage = () => {
                   // Render regular messages
                   return (
                     <div
-                      key={index}
+                      key={msg.id || index}
                       className={`flex gap-3 ${msg.role === 'assistant' ? 'justify-start' : 'justify-end'}`}
                     >
                       {/* AI Avatar - Left */}

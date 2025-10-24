@@ -1,12 +1,24 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Plot from 'react-plotly.js';
 import { HiSparkles } from 'react-icons/hi2';
 import { FiDownload, FiMaximize2 } from 'react-icons/fi';
 
-const ChartMessage = ({ chart, timestamp }) => {
+const ChartMessage = ({ chart, timestamp, messageId }) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [plotlyData, setPlotlyData] = useState(null);
   const [plotlyLayout, setPlotlyLayout] = useState(null);
+  const chartDomId = useMemo(() => {
+    if (messageId) {
+      return `chart-${messageId}`;
+    }
+    if (chart?.chart_id) {
+      return `chart-${chart.chart_id}`;
+    }
+    const fallback = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2, 10);
+    return `chart-${fallback}`;
+  }, [messageId, chart?.chart_id]);
 
   useEffect(() => {
     if (!chart?.figure) return;
@@ -30,12 +42,24 @@ const ChartMessage = ({ chart, timestamp }) => {
   }, [chart]);
 
   const handleDownload = () => {
-    // Trigger Plotly's built-in download via the modebar
-    const plotElement = document.querySelector(`#chart-${chart.chart_id || 'plot'}`);
-    if (plotElement) {
-      const downloadButton = plotElement.querySelector('[data-title="Download plot as a png"]');
-      downloadButton?.click();
+    const graphDiv = document.getElementById(chartDomId);
+    const plotly = window?.Plotly;
+
+    if (!graphDiv || !plotly?.downloadImage) {
+      console.warn('Unable to download chart — Plotly instance not available.');
+      return;
     }
+
+    const filenameBase = chart?.title ? chart.title.replace(/[^a-z0-9-_]+/gi, '_') : 'datacue_chart';
+
+    plotly
+      .downloadImage(graphDiv, {
+        format: 'png',
+        filename: filenameBase.toLowerCase() || 'datacue_chart',
+      })
+      .catch((error) => {
+        console.error('Failed to download chart image:', error);
+      });
   };
 
   const toggleFullscreen = () => {
@@ -103,7 +127,7 @@ const ChartMessage = ({ chart, timestamp }) => {
                 }}
                 style={{ width: '100%', height: '400px' }}
                 useResizeHandler={true}
-                divId={`chart-${chart.chart_id || 'plot'}`}
+                divId={chartDomId}
               />
             </div>
 

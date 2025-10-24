@@ -36,6 +36,7 @@ class OrchestratorService:
         dashboard_options: Optional[Dict[str, Any]] = None,
         knowledge_options: Optional[Dict[str, Any]] = None,
         prediction_options: Optional[Dict[str, Any]] = None,
+        session_id: Optional[str] = None,
         status_callback: Optional[Callable[[str, Optional[Dict[str, Any]]], None]] = None,
     ) -> Dict[str, Any]:
         """Execute an end-to-end workflow across all agents."""
@@ -129,6 +130,7 @@ class OrchestratorService:
             data=data_records,
             generate_insights=knowledge_opts.get("generate_insights", False),
             generate_recommendations=knowledge_opts.get("generate_recommendations", False),
+            session_id=session_id,
         )
         emit("insights_ready", knowledge_payload)
         pipeline["steps"]["knowledge"] = {
