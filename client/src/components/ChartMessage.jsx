@@ -7,6 +7,7 @@ const ChartMessage = ({ chart, timestamp, messageId }) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [plotlyData, setPlotlyData] = useState(null);
   const [plotlyLayout, setPlotlyLayout] = useState(null);
+  const [downloadToast, setDownloadToast] = useState('');
   const chartDomId = useMemo(() => {
     if (messageId) {
       return `chart-${messageId}`;
@@ -41,25 +42,49 @@ const ChartMessage = ({ chart, timestamp, messageId }) => {
     }
   }, [chart]);
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     const graphDiv = document.getElementById(chartDomId);
-    const plotly = window?.Plotly;
-
-    if (!graphDiv || !plotly?.downloadImage) {
-      console.warn('Unable to download chart — Plotly instance not available.');
+    
+    if (!graphDiv) {
+      setDownloadToast('❌ Chart not found');
+      setTimeout(() => setDownloadToast(''), 3000);
       return;
     }
 
-    const filenameBase = chart?.title ? chart.title.replace(/[^a-z0-9-_]+/gi, '_') : 'datacue_chart';
+    // Wait for Plotly to be available
+    const waitForPlotly = async (maxAttempts = 10) => {
+      for (let i = 0; i < maxAttempts; i++) {
+        if (window?.Plotly?.downloadImage) {
+          return window.Plotly;
+        }
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+      return null;
+    };
 
-    plotly
-      .downloadImage(graphDiv, {
+    try {
+      const plotly = await waitForPlotly();
+      
+      if (!plotly?.downloadImage) {
+        setDownloadToast('❌ Download failed - Plotly not ready');
+        setTimeout(() => setDownloadToast(''), 3000);
+        return;
+      }
+
+      const filenameBase = chart?.title ? chart.title.replace(/[^a-z0-9-_]+/gi, '_') : 'datacue_chart';
+
+      await plotly.downloadImage(graphDiv, {
         format: 'png',
         filename: filenameBase.toLowerCase() || 'datacue_chart',
-      })
-      .catch((error) => {
-        console.error('Failed to download chart image:', error);
       });
+      
+      setDownloadToast('✅ Chart downloaded');
+      setTimeout(() => setDownloadToast(''), 2000);
+    } catch (error) {
+      console.error('Failed to download chart image:', error);
+      setDownloadToast('❌ Download failed');
+      setTimeout(() => setDownloadToast(''), 3000);
+    }
   };
 
   const toggleFullscreen = () => {
@@ -83,6 +108,13 @@ const ChartMessage = ({ chart, timestamp, messageId }) => {
 
   return (
     <>
+      {/* Download Toast Notification */}
+      {downloadToast && (
+        <div className="fixed top-4 right-4 z-50 bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 shadow-lg animate-fadeIn">
+          <p className="text-white text-sm">{downloadToast}</p>
+        </div>
+      )}
+      
       <div className="flex items-start space-x-3 group animate-fadeIn">
         {/* Avatar */}
         <div className="w-8 h-8 rounded-lg bg-gray-800 flex items-center justify-center flex-shrink-0">

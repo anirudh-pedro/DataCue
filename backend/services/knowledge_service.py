@@ -1,5 +1,6 @@
 """Service layer wrapping Knowledge Agent functionality."""
 
+from datetime import datetime, timedelta, timezone
 from threading import Lock
 from typing import Any, Dict, Optional, List
 
@@ -12,38 +13,79 @@ from shared.config import get_config
 class KnowledgeService:
     """Orchestrate per-session KnowledgeAgent instances."""
 
-    _DEFAULT_SESSION_ID = "__global__"
+    _MAX_SESSIONS = 100  # Maximum number of concurrent sessions
+    _SESSION_TTL_HOURS = 24  # Sessions expire after 24 hours of inactivity
 
     def __init__(self) -> None:
         config = get_config()
         self._groq_api_key = config.groq_api_key
         self._agents: Dict[str, KnowledgeAgent] = {}
+        self._access_times: Dict[str, datetime] = {}  # Track last access time
         self._lock = Lock()
 
-    def _resolve_session_id(self, session_id: Optional[str]) -> str:
-        return session_id or self._DEFAULT_SESSION_ID
+    def _validate_session_id(self, session_id: Optional[str]) -> str:
+        """Validate and return session_id, raising error if missing."""
+        if not session_id:
+            raise ValueError(
+                "session_id is required. Please provide a valid session ID to isolate agent state."
+            )
+        return session_id
+
+    def _cleanup_expired_sessions(self) -> None:
+        """Remove sessions that have exceeded TTL. Must be called within lock."""
+        now = datetime.now(timezone.utc)
+        ttl_delta = timedelta(hours=self._SESSION_TTL_HOURS)
+        expired_keys = [
+            key for key, last_access in self._access_times.items()
+            if now - last_access > ttl_delta
+        ]
+        for key in expired_keys:
+            self._agents.pop(key, None)
+            self._access_times.pop(key, None)
+
+    def _evict_lru_session(self) -> None:
+        """Evict the least recently used session. Must be called within lock."""
+        if not self._access_times:
+            return
+        lru_key = min(self._access_times.items(), key=lambda x: x[1])[0]
+        self._agents.pop(lru_key, None)
+        self._access_times.pop(lru_key, None)
 
     def _get_agent(self, session_key: str) -> Optional[KnowledgeAgent]:
         with self._lock:
-            return self._agents.get(session_key)
+            self._cleanup_expired_sessions()
+            agent = self._agents.get(session_key)
+            if agent:
+                self._access_times[session_key] = datetime.now(timezone.utc)
+            return agent
 
     def _store_agent(self, session_key: str, agent: KnowledgeAgent) -> None:
         with self._lock:
+            self._cleanup_expired_sessions()
+            
+            # If at capacity, evict LRU session
+            if len(self._agents) >= self._MAX_SESSIONS and session_key not in self._agents:
+                self._evict_lru_session()
+            
             self._agents[session_key] = agent
+            self._access_times[session_key] = datetime.now(timezone.utc)
 
-    def clear_session(self, session_id: Optional[str]) -> None:
-        session_key = self._resolve_session_id(session_id)
+    def clear_session(self, session_id: str) -> None:
+        """Clear agent state for a specific session."""
+        session_key = self._validate_session_id(session_id)
         with self._lock:
             self._agents.pop(session_key, None)
+            self._access_times.pop(session_key, None)
 
     def analyse(
         self,
         data: List[Dict[str, Any]],
         generate_insights: bool = True,
         generate_recommendations: bool = True,
-        session_id: Optional[str] = None,
+        session_id: str = None,
     ) -> Dict[str, Any]:
-        session_key = self._resolve_session_id(session_id)
+        """Analyze dataset and store agent for the session."""
+        session_key = self._validate_session_id(session_id)
         dataframe = pd.DataFrame(data)
 
         agent = KnowledgeAgent(groq_api_key=self._groq_api_key)
@@ -55,8 +97,9 @@ class KnowledgeService:
         self._store_agent(session_key, agent)
         return result
 
-    def ask(self, question: str, session_id: Optional[str] = None, *, use_cache: bool = True) -> Dict[str, Any]:
-        session_key = self._resolve_session_id(session_id)
+    def ask(self, question: str, session_id: str = None, *, use_cache: bool = True) -> Dict[str, Any]:
+        """Ask a question within a specific session context."""
+        session_key = self._validate_session_id(session_id)
         agent = self._get_agent(session_key)
         if agent is None:
             return {
@@ -68,7 +111,7 @@ class KnowledgeService:
     def ask_visual(
         self,
         question: str,
-        session_id: Optional[str] = None,
+        session_id: str = None,
         *,
         generate_chart: bool = True,
     ) -> Dict[str, Any]:
@@ -76,7 +119,7 @@ class KnowledgeService:
         Answer question and optionally generate a relevant chart for the given session.
         Returns: {success, answer, chart: {type, title, figure}, method}
         """
-        session_key = self._resolve_session_id(session_id)
+        session_key = self._validate_session_id(session_id)
         agent = self._get_agent(session_key)
         if agent is None:
             return {
@@ -152,12 +195,31 @@ class KnowledgeService:
 
         return None
 
-    def summary(self, session_id: Optional[str] = None) -> Dict[str, Any]:
-        session_key = self._resolve_session_id(session_id)
+    def summary(self, session_id: str = None) -> Dict[str, Any]:
+        """Get summary of analysis for a specific session."""
+        session_key = self._validate_session_id(session_id)
         agent = self._get_agent(session_key)
         if agent is None:
             return {"error": "No analysis found for this session."}
         return agent.get_summary()
+
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get statistics about the session cache for monitoring."""
+        with self._lock:
+            now = datetime.now(timezone.utc)
+            return {
+                "active_sessions": len(self._agents),
+                "max_sessions": self._MAX_SESSIONS,
+                "ttl_hours": self._SESSION_TTL_HOURS,
+                "oldest_session_age_hours": (
+                    (now - min(self._access_times.values())).total_seconds() / 3600
+                    if self._access_times else 0
+                ),
+                "newest_session_age_hours": (
+                    (now - max(self._access_times.values())).total_seconds() / 3600
+                    if self._access_times else 0
+                ),
+            }
 
 
 # Provide a shared singleton instance so that analysis state persists across routers

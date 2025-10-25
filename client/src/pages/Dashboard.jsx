@@ -95,37 +95,47 @@ const Dashboard = () => {
   }, [navigate]);
 
   useEffect(() => {
-    setLoading(true);
-    let dashboardData = location.state?.dashboardData;
+    const loadDashboard = async () => {
+      setLoading(true);
+      
+      // First check if data was passed via navigation state
+      let dashboardData = location.state?.dashboardData;
 
-    if (!dashboardData) {
-      const stored = sessionStorage.getItem('dashboardData');
-      if (stored) {
-        try {
-          dashboardData = JSON.parse(stored);
-        } catch (error) {
-          console.error('Failed to parse stored dashboard data:', error);
+      // If no state, try to fetch from MongoDB using session ID
+      if (!dashboardData) {
+        const sessionId = localStorage.getItem('chatSessionId');
+        if (sessionId) {
+          try {
+            const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
+            const response = await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${sessionId}/dashboard`);
+            if (response.ok) {
+              dashboardData = await response.json();
+            }
+          } catch (error) {
+            console.error('Failed to fetch dashboard data from MongoDB:', error);
+          }
         }
       }
-    }
 
-    if (dashboardData) {
-      sessionStorage.setItem('dashboardData', JSON.stringify(dashboardData));
-      setCharts(dashboardData.charts || []);
-      setDatasetName(dashboardData.dataset_name || 'Dataset');
-      setSummary(dashboardData.summary || null);
-      setQualityIndicators(dashboardData.quality_indicators || null);
-      setMetadataSummary(dashboardData.metadata_summary || null);
-      setLayout(dashboardData.layout || null);
-    } else {
-      setCharts([]);
-      setSummary(null);
-      setQualityIndicators(null);
-      setMetadataSummary(null);
-      setLayout(null);
-    }
+      if (dashboardData) {
+        setCharts(dashboardData.charts || []);
+        setDatasetName(dashboardData.dataset_name || 'Dataset');
+        setSummary(dashboardData.summary || null);
+        setQualityIndicators(dashboardData.quality_indicators || null);
+        setMetadataSummary(dashboardData.metadata_summary || null);
+        setLayout(dashboardData.layout || null);
+      } else {
+        setCharts([]);
+        setSummary(null);
+        setQualityIndicators(null);
+        setMetadataSummary(null);
+        setLayout(null);
+      }
 
-    setLoading(false);
+      setLoading(false);
+    };
+    
+    loadDashboard();
   }, [location.state]);
 
   const orderedCharts = useMemo(() => {

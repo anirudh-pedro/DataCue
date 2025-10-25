@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -58,7 +58,7 @@ class ChatMessage:
             chart=payload.get("chart"),
             metadata=payload.get("metadata") or {},
             show_dashboard_button=bool(payload.get("showDashboardButton")),
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
 
 
@@ -68,6 +68,7 @@ class _InMemoryChatStore:
     def __init__(self) -> None:
         self.sessions: Dict[str, Dict[str, Any]] = {}
         self.messages: Dict[str, List[Dict[str, Any]]] = {}
+        self.dashboards: Dict[str, Dict[str, Any]] = {}  # Store dashboard data
 
     def create_session(self, user_id: str, email: Optional[str], display_name: Optional[str]) -> Dict[str, Any]:
         session_id = uuid4().hex
@@ -76,8 +77,8 @@ class _InMemoryChatStore:
             "user_id": user_id,
             "email": email,
             "display_name": display_name,
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow(),
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc),
         }
         self.sessions[session_id] = session
         self.messages.setdefault(session_id, [])
@@ -95,6 +96,27 @@ class _InMemoryChatStore:
         )
         if message.session_id in self.sessions:
             self.sessions[message.session_id]["updated_at"] = message.created_at
+
+    def store_dashboard_data(self, session_id: str, dashboard_data: Dict[str, Any]) -> None:
+        """Store dashboard data for a session."""
+        self.dashboards[session_id] = dashboard_data
+
+    def get_dashboard_data(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve dashboard data for a session."""
+        return self.dashboards.get(session_id)
+
+    def delete_session(self, session_id: str) -> None:
+        """Delete a session and its messages."""
+        self.sessions.pop(session_id, None)
+        self.messages.pop(session_id, None)
+        self.dashboards.pop(session_id, None)
+
+    def list_user_sessions(self, user_id: str) -> List[Dict[str, Any]]:
+        """List all sessions for a user."""
+        return [
+            session for session in self.sessions.values()
+            if session.get("user_id") == user_id
+        ]
 
 
 class ChatService:
@@ -115,9 +137,19 @@ class ChatService:
                 db = self._client.get_default_database() or self._client["datacue"]
                 self._sessions = db["chat_sessions"]
                 self._messages = db["chat_messages"]
+                
+                # Create indexes for performance
                 self._sessions.create_index([("user_id", ASCENDING)])
                 self._messages.create_index([("session_id", ASCENDING), ("created_at", ASCENDING)])
-                _LOGGER.info("ChatService connected to MongoDB")
+                
+                # Create TTL index to auto-expire sessions after 30 days of inactivity
+                # MongoDB will automatically delete documents where updated_at is older than 30 days
+                self._sessions.create_index(
+                    [("updated_at", ASCENDING)],
+                    expireAfterSeconds=2592000  # 30 days in seconds (30 * 24 * 60 * 60)
+                )
+                
+                _LOGGER.info("ChatService connected to MongoDB with TTL index on sessions")
             except PyMongoError as exc:
                 _LOGGER.warning("ChatService falling back to in-memory store: %s", exc)
                 self._client = None
@@ -137,8 +169,8 @@ class ChatService:
             "user_id": user_id,
             "email": email,
             "display_name": display_name,
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow(),
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc),
         }
         self._sessions.insert_one(document)
         return {
@@ -201,6 +233,64 @@ class ChatService:
             )
 
         return message.to_dict()
+
+    # Dashboard data management ------------------------------------------
+    def store_dashboard_data(self, session_id: str, dashboard_data: Dict[str, Any]) -> None:
+        """Store dashboard data for a session in MongoDB (canonical source)."""
+        if not self._sessions:
+            self._fallback.store_dashboard_data(session_id, dashboard_data)
+        else:
+            self._sessions.update_one(
+                {"_id": session_id},
+                {
+                    "$set": {
+                        "dashboard_data": dashboard_data,
+                        "updated_at": datetime.now(timezone.utc),
+                    }
+                },
+                upsert=False,
+            )
+
+    def get_dashboard_data(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve dashboard data for a session from MongoDB."""
+        if not self._sessions:
+            return self._fallback.get_dashboard_data(session_id)
+        
+        session = self._sessions.find_one({"_id": session_id})
+        if not session:
+            return None
+        return session.get("dashboard_data")
+
+    # Session deletion and listing ------------------------------------
+    def delete_session(self, session_id: str) -> None:
+        """Delete a session and all its associated messages."""
+        if not self._sessions:
+            self._fallback.delete_session(session_id)
+        else:
+            # Delete session document
+            self._sessions.delete_one({"_id": session_id})
+            # Delete all associated messages
+            if self._messages:
+                self._messages.delete_many({"session_id": session_id})
+
+    def list_user_sessions(self, user_id: str) -> List[Dict[str, Any]]:
+        """List all sessions for a specific user."""
+        if not self._sessions:
+            return self._fallback.list_user_sessions(user_id)
+        
+        cursor = self._sessions.find({"user_id": user_id}).sort("updated_at", -1)
+        sessions = []
+        for doc in cursor:
+            sessions.append({
+                "id": doc.get("_id"),
+                "user_id": doc.get("user_id"),
+                "email": doc.get("email"),
+                "display_name": doc.get("display_name"),
+                "created_at": doc.get("created_at"),
+                "updated_at": doc.get("updated_at"),
+                "has_dashboard": bool(doc.get("dashboard_data")),
+            })
+        return sessions
 
 
 _chat_service: Optional[ChatService] = None

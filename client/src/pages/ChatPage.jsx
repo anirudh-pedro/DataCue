@@ -16,9 +16,9 @@ const STAGE_LABELS = {
   ingestion_failed: '❌ Ingestion failed. Please review your dataset.',
   generating_summary: '📊 Generating summary statistics…',
   summary_ready: '📈 Summary ready. Crafting dashboards…',
-  computing_insights: '� Computing insights and recommendations…',
-  insights_ready: '💡 Insights generated. Finalising presentation…',
-  training_model: '�🧮 Training regression model…',
+  computing_insights: '💡 Computing insights and recommendations…',
+  insights_ready: '✨ Insights generated. Finalising presentation…',
+  training_model: '🧮 Training regression model…',
   computing_shap: '🧠 Computing SHAP explanations…',
   prediction_ready: '🤖 Predictions ready. Wrapping up…',
   pipeline_complete: '✅ Analysis complete — visualizations ready!',
@@ -37,9 +37,11 @@ const ChatPage = () => {
   const [currentUser, setCurrentUser] = useState(null);
   const [sessionId, setSessionId] = useState(() => localStorage.getItem('chatSessionId'));
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [healthWarning, setHealthWarning] = useState('');
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
+  const isInitializingRef = useRef(false); // Prevent race condition
   const sessionReady = Boolean(sessionId && currentUser && !isLoadingHistory);
 
   const generateMessageId = () => {
@@ -97,6 +99,35 @@ const ChatPage = () => {
     return () => unsubscribe();
   }, [navigate]);
 
+  // Health check monitoring
+  useEffect(() => {
+    const checkHealth = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/health`);
+        if (!response.ok) {
+          setHealthWarning('⚠️ Backend service is experiencing issues');
+          return;
+        }
+        const health = await response.json();
+        if (health.status === 'degraded') {
+          if (health.services?.mongodb === 'unreachable') {
+            setHealthWarning('⚠️ Database connection lost - chat history may not save');
+          } else {
+            setHealthWarning('⚠️ Some services are degraded');
+          }
+        } else {
+          setHealthWarning('');
+        }
+      } catch (error) {
+        setHealthWarning('⚠️ Unable to reach backend service');
+      }
+    };
+
+    checkHealth();
+    const interval = setInterval(checkHealth, 30000); // Check every 30 seconds
+    return () => clearInterval(interval);
+  }, []);
+
   useEffect(() => {
     const loadHistory = async (activeSessionId) => {
       try {
@@ -118,12 +149,16 @@ const ChatPage = () => {
           : [];
 
         setMessages(history);
-        setHasDashboard(history.some((message) => message.showDashboardButton));
+        
+        // Check if dashboard data exists in MongoDB
+        const hasDashboardButton = history.some((message) => message.showDashboardButton);
+        setHasDashboard(hasDashboardButton);
+        
         return true;
       } catch (error) {
         console.error('Failed to load chat history:', error);
         setMessages([]);
-        setHasDashboard(Boolean(sessionStorage.getItem('dashboardData')));
+        setHasDashboard(false);
         localStorage.removeItem('chatSessionId');
         localStorage.removeItem('chatSessionUserId');
         return false;
@@ -151,11 +186,18 @@ const ChatPage = () => {
       localStorage.setItem('chatSessionUserId', user.uid);
       setSessionId(newSessionId);
       setMessages([]);
-      setHasDashboard(Boolean(sessionStorage.getItem('dashboardData')));
+      setHasDashboard(false);
     };
 
     const initialiseSession = async (user) => {
+      // Prevent multiple simultaneous initialization calls
+      if (isInitializingRef.current) {
+        return;
+      }
+      
+      isInitializingRef.current = true;
       setIsLoadingHistory(true);
+      
       try {
         const storedSessionId = localStorage.getItem('chatSessionId');
         const storedUserId = localStorage.getItem('chatSessionUserId');
@@ -173,6 +215,7 @@ const ChatPage = () => {
         console.error('Failed to initialise chat session:', error);
       } finally {
         setIsLoadingHistory(false);
+        isInitializingRef.current = false;
       }
     };
 
@@ -182,6 +225,7 @@ const ChatPage = () => {
       setSessionId(null);
       setMessages([]);
       setIsLoadingHistory(false);
+      isInitializingRef.current = false;
     }
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -338,10 +382,23 @@ const ChatPage = () => {
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  const handleViewDashboard = () => {
-    const data = JSON.parse(sessionStorage.getItem('dashboardData') || '{}');
-    if (data.charts && data.charts.length > 0) {
-      navigate('/dashboard', { state: { dashboardData: data } });
+  const handleViewDashboard = async () => {
+    if (!sessionId) return;
+    
+    try {
+      // Fetch dashboard data from MongoDB (canonical source)
+      const response = await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${sessionId}/dashboard`);
+      if (!response.ok) {
+        console.error('No dashboard data found for this session');
+        return;
+      }
+      
+      const dashboardData = await response.json();
+      if (dashboardData.charts && dashboardData.charts.length > 0) {
+        navigate('/dashboard', { state: { dashboardData } });
+      }
+    } catch (error) {
+      console.error('Failed to load dashboard data:', error);
     }
   };
 
@@ -426,19 +483,27 @@ const ChatPage = () => {
       const datasetName = pipelineResult?.dataset_name || file.name;
       setUploadStatusMessage(STAGE_LABELS.pipeline_complete);
       
-      // Store dashboard data and show button in chat (maintain chat history)
+      // Store dashboard data in MongoDB (canonical source)
       const dashboardData = pipelineResult?.steps?.dashboard;
       if (dashboardData && dashboardData.charts && dashboardData.charts.length > 0) {
-        // Store dashboard data in sessionStorage for navigation
-        sessionStorage.setItem('dashboardData', JSON.stringify({
-          charts: dashboardData.charts,
-          dataset_name: datasetName,
-          summary: dashboardData.summary,
-          quality_indicators: dashboardData.quality_indicators,
-          metadata_summary: dashboardData.metadata_summary,
-          layout: dashboardData.layout,
-          filters: dashboardData.filters,
-        }));
+        // Store in MongoDB via backend API
+        try {
+          await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${sessionId}/dashboard`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              charts: dashboardData.charts,
+              dataset_name: datasetName,
+              summary: dashboardData.summary,
+              quality_indicators: dashboardData.quality_indicators,
+              metadata_summary: dashboardData.metadata_summary,
+              layout: dashboardData.layout,
+              filters: dashboardData.filters,
+            }),
+          });
+        } catch (error) {
+          console.error('Failed to store dashboard data:', error);
+        }
         
         await sleep(500);
         
@@ -462,8 +527,21 @@ const ChatPage = () => {
         await sleep(900);
       }
     } catch (error) {
-      const friendly = error?.message || 'Unknown error.';
-      setUploadStatusMessage(`⚠️ ${friendly}`);
+      let friendly;
+      if (error?.message?.includes('Connection lost while receiving analysis updates')) {
+        friendly = '🔌 Connection lost during analysis. Please check your network or try again.';
+      } else if (error?.message?.includes('Unable to create processing session')) {
+        friendly = '🛠️ Backend error: Unable to start analysis. Please try again later.';
+      } else if (error?.message?.includes('Pipeline failed')) {
+        friendly = '❌ Data processing failed. Please check your file format or try a different dataset.';
+      } else if (error?.message?.includes('Pipeline session ID missing')) {
+        friendly = '⚠️ Server did not return a session ID. Please try again.';
+      } else if (error?.name === 'TypeError' && error?.message?.includes('Failed to fetch')) {
+        friendly = '🌐 Network error: Unable to reach the server. Please check your internet connection.';
+      } else {
+        friendly = `⚠️ ${error?.message || 'Unknown error.'}`;
+      }
+      setUploadStatusMessage(friendly);
       appendMessage({
         role: 'assistant',
         content: `Failed to process the uploaded file. ${friendly}`,
@@ -492,6 +570,14 @@ const ChatPage = () => {
           className="hidden"
           onChange={handleFileChange}
         />
+        
+        {/* Health Warning Banner */}
+        {healthWarning && (
+          <div className="absolute top-0 left-0 right-0 z-30 bg-yellow-900/90 border-b border-yellow-700 px-4 py-2 text-center">
+            <p className="text-sm text-yellow-100">{healthWarning}</p>
+          </div>
+        )}
+        
         {isLoadingHistory && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm">
             <div className="w-12 h-12 border-4 border-gray-700 border-t-white rounded-full animate-spin" aria-hidden="true" />

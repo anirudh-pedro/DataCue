@@ -15,11 +15,6 @@ from dotenv import load_dotenv
 _ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(dotenv_path=_ENV_PATH, override=False)
 
-# Ensure third-party SDKs receive the environment variables they expect.
-# Our .env uses `groq_api`, but the Groq SDK looks for `GROQ_API_KEY`.
-if os.getenv("groq_api") and not os.getenv("GROQ_API_KEY"):
-    os.environ["GROQ_API_KEY"] = os.environ["groq_api"]
-
 
 class Settings:
     """Centralised access to runtime configuration."""
@@ -28,8 +23,9 @@ class Settings:
     mongo_uri: Optional[str]
 
     def __init__(self) -> None:
-        self.groq_api_key = os.getenv("GROQ_API_KEY") or os.getenv("groq_api")
-        self.mongo_uri = os.getenv("MONGO_URI") or os.getenv("mongo_uri")
+        # Standardize on uppercase environment variable names
+        self.groq_api_key = os.getenv("GROQ_API_KEY")
+        self.mongo_uri = os.getenv("MONGO_URI")
 
     @property
     def has_groq(self) -> bool:

@@ -1,7 +1,7 @@
 """Model registry layer with optional MongoDB persistence."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pymongo import ASCENDING, MongoClient
@@ -33,7 +33,7 @@ class ModelRegistry:
         record = {
             "model_id": model_id,
             "metadata": metadata,
-            "created_at": datetime.utcnow(),
+            "created_at": datetime.now(timezone.utc),
         }
         storage.save_metadata(model_id, metadata)
 

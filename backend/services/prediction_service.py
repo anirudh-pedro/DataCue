@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -61,7 +61,7 @@ class PredictionService:
             "models_trained": results.get("models_trained", []),
             "metrics": results.get("all_models"),
             "recommendations": results.get("recommendations", {}),
-            "timestamp": results.get("timestamp") or datetime.utcnow().isoformat(),
+            "timestamp": results.get("timestamp") or datetime.now(timezone.utc).isoformat(),
         }
 
         self._registry.register(model_id=model_id, metadata=metadata)
