@@ -105,6 +105,12 @@ class _InMemoryChatStore:
         """Retrieve dashboard data for a session."""
         return self.dashboards.get(session_id)
 
+    def update_session_title(self, session_id: str, title: str) -> None:
+        """Update the title of a session."""
+        if session_id in self.sessions:
+            self.sessions[session_id]["title"] = title
+            self.sessions[session_id]["updated_at"] = datetime.utcnow()
+
     def delete_session(self, session_id: str) -> None:
         """Delete a session and its messages."""
         self.sessions.pop(session_id, None)
@@ -261,6 +267,17 @@ class ChatService:
             return None
         return session.get("dashboard_data")
 
+    # Session management ------------------------------------
+    def update_session_title(self, session_id: str, title: str) -> None:
+        """Update the title of a chat session."""
+        if not self._sessions:
+            self._fallback.update_session_title(session_id, title)
+        else:
+            self._sessions.update_one(
+                {"_id": session_id},
+                {"$set": {"title": title, "updated_at": datetime.utcnow()}}
+            )
+
     # Session deletion and listing ------------------------------------
     def delete_session(self, session_id: str) -> None:
         """Delete a session and all its associated messages."""
@@ -281,14 +298,22 @@ class ChatService:
         cursor = self._sessions.find({"user_id": user_id}).sort("updated_at", -1)
         sessions = []
         for doc in cursor:
+            # Count messages for this session
+            message_count = 0
+            if self._messages:
+                message_count = self._messages.count_documents({"session_id": doc.get("_id")})
+            
             sessions.append({
+                "session_id": doc.get("_id"),
                 "id": doc.get("_id"),
                 "user_id": doc.get("user_id"),
                 "email": doc.get("email"),
                 "display_name": doc.get("display_name"),
+                "title": doc.get("title", "New Chat"),
                 "created_at": doc.get("created_at"),
                 "updated_at": doc.get("updated_at"),
                 "has_dashboard": bool(doc.get("dashboard_data")),
+                "message_count": message_count,
             })
         return sessions
 

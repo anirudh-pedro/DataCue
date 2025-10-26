@@ -103,7 +103,7 @@ const Dashboard = () => {
 
       // If no state, try to fetch from MongoDB using session ID
       if (!dashboardData) {
-        const sessionId = localStorage.getItem('chatSessionId');
+        const sessionId = localStorage.getItem('sessionId') || localStorage.getItem('chatSessionId');
         if (sessionId) {
           try {
             const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';

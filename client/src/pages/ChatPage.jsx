@@ -51,27 +51,43 @@ const ChatPage = () => {
     return Math.random().toString(36).slice(2, 12);
   };
 
-  const persistMessage = async (message) => {
+  const persistMessage = async (message, retries = 3) => {
     if (!sessionId || !currentUser) {
       return;
     }
 
-    try {
-      await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${sessionId}/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: message.id,
-          role: message.role,
-          content: message.content,
-          timestamp: message.timestamp,
-          chart: message.chart,
-          metadata: message.metadata,
-          showDashboardButton: Boolean(message.showDashboardButton),
-        }),
-      });
-    } catch (error) {
-      console.error('Failed to persist chat message:', error);
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const response = await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${sessionId}/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: message.id,
+            role: message.role,
+            content: message.content,
+            timestamp: message.timestamp,
+            chart: message.chart,
+            metadata: message.metadata,
+            showDashboardButton: Boolean(message.showDashboardButton),
+          }),
+        });
+        
+        if (response.ok) {
+          return; // Success
+        }
+        
+        if (attempt === retries) {
+          throw new Error(`Failed to persist message after ${retries} attempts`);
+        }
+        
+        // Wait before retry (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+      } catch (error) {
+        if (attempt === retries) {
+          console.error('Failed to persist chat message:', error);
+          // Could show a toast notification here
+        }
+      }
     }
   };
 
@@ -159,7 +175,9 @@ const ChatPage = () => {
         console.error('Failed to load chat history:', error);
         setMessages([]);
         setHasDashboard(false);
+        localStorage.removeItem('sessionId');
         localStorage.removeItem('chatSessionId');
+        localStorage.removeItem('sessionUserId');
         localStorage.removeItem('chatSessionUserId');
         return false;
       }
@@ -182,8 +200,8 @@ const ChatPage = () => {
 
       const payload = await response.json();
       const newSessionId = payload.session_id;
-      localStorage.setItem('chatSessionId', newSessionId);
-      localStorage.setItem('chatSessionUserId', user.uid);
+      localStorage.setItem('sessionId', newSessionId);
+      localStorage.setItem('sessionUserId', user.uid);
       setSessionId(newSessionId);
       setMessages([]);
       setHasDashboard(false);
@@ -199,13 +217,16 @@ const ChatPage = () => {
       setIsLoadingHistory(true);
       
       try {
-        const storedSessionId = localStorage.getItem('chatSessionId');
-        const storedUserId = localStorage.getItem('chatSessionUserId');
+        const storedSessionId = localStorage.getItem('sessionId') || localStorage.getItem('chatSessionId');
+        const storedUserId = localStorage.getItem('sessionUserId') || localStorage.getItem('chatSessionUserId');
 
         if (storedSessionId && storedUserId === user.uid) {
           const loaded = await loadHistory(storedSessionId);
           if (loaded) {
             setSessionId(storedSessionId);
+            // Update to new key format
+            localStorage.setItem('sessionId', storedSessionId);
+            localStorage.setItem('sessionUserId', user.uid);
             return;
           }
         }
@@ -281,6 +302,36 @@ const ChatPage = () => {
     return `Here is what I received:\n\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``;
   };
 
+  const generateChatTitle = (userMessage) => {
+    // Generate a title from the first user message
+    // Take first 50 chars or up to first sentence
+    let title = userMessage.trim();
+    
+    // Find first sentence ending
+    const sentenceEnd = title.search(/[.!?]\s/);
+    if (sentenceEnd > 0 && sentenceEnd < 60) {
+      title = title.substring(0, sentenceEnd + 1);
+    } else if (title.length > 50) {
+      title = title.substring(0, 47) + '...';
+    }
+    
+    return title;
+  };
+
+  const updateSessionTitle = async (title) => {
+    if (!sessionId) return;
+    
+    try {
+      await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${sessionId}/title`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      });
+    } catch (error) {
+      console.error('Failed to update session title:', error);
+    }
+  };
+
   const handleSendMessage = async () => {
     if (!inputMessage.trim() || isUploading || !sessionReady) return;
 
@@ -293,6 +344,13 @@ const ChatPage = () => {
 
     appendMessage(userMessage);
     setInputMessage('');
+
+    // Auto-generate title from first user message
+    const isFirstMessage = messages.filter(m => m.role === 'user').length === 0;
+    if (isFirstMessage) {
+      const title = generateChatTitle(userContent);
+      updateSessionTitle(title);
+    }
 
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -438,13 +496,13 @@ const ChatPage = () => {
       }
 
       const sessionPayload = await sessionResponse.json();
-      const sessionId = sessionPayload?.session_id;
-      if (!sessionId) {
+      const pipelineSessionId = sessionPayload?.session_id;
+      if (!pipelineSessionId) {
         throw new Error('Pipeline session ID missing from server response.');
       }
 
       const pipelineResult = await new Promise((resolve, reject) => {
-  const streamUrl = `${API_BASE_URL.replace(/\/+$/, '')}/orchestrator/pipeline/session/${sessionId}/stream`;
+  const streamUrl = `${API_BASE_URL.replace(/\/+$/, '')}/orchestrator/pipeline/session/${pipelineSessionId}/stream`;
         const eventSource = new EventSource(streamUrl);
 
         eventSource.onmessage = (event) => {
@@ -482,6 +540,13 @@ const ChatPage = () => {
 
       const datasetName = pipelineResult?.dataset_name || file.name;
       setUploadStatusMessage(STAGE_LABELS.pipeline_complete);
+      
+      // Auto-generate title from filename on first upload
+      const isFirstMessage = messages.filter(m => m.role === 'user' || m.role === 'file').length === 0;
+      if (isFirstMessage) {
+        const title = `Analysis: ${datasetName}`;
+        updateSessionTitle(title);
+      }
       
       // Store dashboard data in MongoDB (canonical source)
       const dashboardData = pipelineResult?.steps?.dashboard;

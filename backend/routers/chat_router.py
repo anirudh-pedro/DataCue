@@ -23,6 +23,10 @@ class CreateSessionResponse(BaseModel):
     session_id: str
 
 
+class UpdateTitleRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=100)
+
+
 class ChatMessagePayload(BaseModel):
     role: str
     content: Optional[str] = None
@@ -135,17 +139,33 @@ def get_dashboard(
     return dashboard_data
 
 
-@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_session(
+@router.patch("/sessions/{session_id}/title")
+def update_session_title(
+    session_id: str,
+    payload: UpdateTitleRequest,
+    service: ChatService = Depends(get_chat_service),
+) -> Dict[str, Any]:
+    """Update the title of a chat session."""
+    session = service.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat session not found")
+    
+    service.update_session_title(session_id, payload.title)
+    return {"session_id": session_id, "title": payload.title}
+
+
+@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
+async def delete_session(
     session_id: str,
     service: ChatService = Depends(get_chat_service),
-) -> None:
+):
     """Delete a chat session and all its messages."""
     session = service.get_session(session_id)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat session not found")
     
     service.delete_session(session_id)
+    return None
 
 
 @router.get("/sessions/user/{user_id}")
