@@ -2,10 +2,12 @@
 
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from services.chat_service import ChatService, get_chat_service
 from services.knowledge_service import get_shared_service
+from shared.auth import AuthenticatedUser, get_authenticated_user
 from shared.utils import clean_response
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
@@ -25,8 +27,16 @@ class AskQuestionRequest(BaseModel):
 
 
 @router.post("/analyze")
-def analyze_dataset(payload: KnowledgeAnalyseRequest):
+def analyze_dataset(
+    payload: KnowledgeAnalyseRequest,
+    current_user: AuthenticatedUser = Depends(get_authenticated_user),
+    chat_store: ChatService = Depends(get_chat_service),
+):
     try:
+        if payload.session_id:
+            session = chat_store.get_session(payload.session_id)
+            if not session or session.get("user_id") != current_user.uid:
+                raise HTTPException(status_code=404, detail="Chat session not found")
         result = service.analyse(
             data=payload.data,
             generate_insights=payload.generate_insights,
@@ -39,7 +49,14 @@ def analyze_dataset(payload: KnowledgeAnalyseRequest):
 
 
 @router.post("/ask")
-def ask_question(payload: AskQuestionRequest):
+def ask_question(
+    payload: AskQuestionRequest,
+    current_user: AuthenticatedUser = Depends(get_authenticated_user),
+    chat_store: ChatService = Depends(get_chat_service),
+):
+    session = chat_store.get_session(payload.session_id)
+    if not session or session.get("user_id") != current_user.uid:
+        raise HTTPException(status_code=404, detail="Chat session not found")
     try:
         result = service.ask(question=payload.question, session_id=payload.session_id)
         if not result.get("success", True):
@@ -56,7 +73,14 @@ class VisualQueryRequest(BaseModel):
 
 
 @router.post("/ask-visual")
-def ask_visual_question(payload: VisualQueryRequest):
+def ask_visual_question(
+    payload: VisualQueryRequest,
+    current_user: AuthenticatedUser = Depends(get_authenticated_user),
+    chat_store: ChatService = Depends(get_chat_service),
+):
+    session = chat_store.get_session(payload.session_id)
+    if not session or session.get("user_id") != current_user.uid:
+        raise HTTPException(status_code=404, detail="Chat session not found")
     """
     Answer questions with optional chart generation for visual insights.
     Returns both text answer and chart (if applicable).
@@ -75,8 +99,15 @@ def ask_visual_question(payload: VisualQueryRequest):
 
 
 @router.get("/summary")
-def get_summary(session_id: str):
+def get_summary(
+    session_id: str,
+    current_user: AuthenticatedUser = Depends(get_authenticated_user),
+    chat_store: ChatService = Depends(get_chat_service),
+):
     """Get analysis summary for a specific session."""
+    session = chat_store.get_session(session_id)
+    if not session or session.get("user_id") != current_user.uid:
+        raise HTTPException(status_code=404, detail="Chat session not found")
     try:
         return clean_response(service.summary(session_id=session_id))
     except ValueError as e:

@@ -28,6 +28,30 @@ class AppConfig:
     def has_groq(self) -> bool:
         return self._settings.has_groq
 
+    @property
+    def firebase_credentials_file(self) -> Optional[str]:
+        return self._settings.firebase_credentials_file
+
+    @property
+    def firebase_service_account(self) -> Optional[str]:
+        return self._settings.firebase_service_account
+
+    @property
+    def firebase_project_id(self) -> Optional[str]:
+        return self._settings.firebase_project_id
+
+    @property
+    def disable_firebase_auth(self) -> bool:
+        return self._settings.disable_firebase_auth
+
+    @property
+    def firebase_auth_emulator_host(self) -> Optional[str]:
+        return self._settings.firebase_auth_emulator_host
+
+    @property
+    def has_firebase_credentials(self) -> bool:
+        return self._settings.has_firebase_credentials
+
 
 @lru_cache(maxsize=1)
 def get_config() -> AppConfig:

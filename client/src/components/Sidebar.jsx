@@ -1,6 +1,7 @@
 ﻿import { useState, useEffect } from 'react';
 import { FiMessageSquare, FiFile, FiPlus, FiTrash2, FiChevronLeft, FiChevronRight, FiMenu } from 'react-icons/fi';
 import { auth } from '../firebase';
+import { authFetch } from '../utils/authFetch';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 
@@ -20,7 +21,7 @@ const Sidebar = () => {
 
       setIsLoading(true);
       try {
-        const response = await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/user/${user.uid}`);
+  const response = await authFetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions`);
         if (!response.ok) {
           throw new Error('Failed to fetch sessions');
         }
@@ -67,7 +68,7 @@ const Sidebar = () => {
     }
 
     try {
-      const response = await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${id}`, {
+      const response = await authFetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${id}`, {
         method: 'DELETE',
       });
 

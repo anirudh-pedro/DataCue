@@ -7,6 +7,7 @@ import ChartMessage from '../components/ChartMessage';
 import { FiSend, FiUpload, FiUser } from 'react-icons/fi';
 import { HiSparkles } from 'react-icons/hi2';
 import { auth } from '../firebase';
+import { authFetch } from '../utils/authFetch';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 const STAGE_LABELS = {
@@ -58,7 +59,7 @@ const ChatPage = () => {
 
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
-        const response = await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${sessionId}/messages`, {
+        const response = await authFetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${sessionId}/messages`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -147,7 +148,7 @@ const ChatPage = () => {
   useEffect(() => {
     const loadHistory = async (activeSessionId) => {
       try {
-        const response = await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${activeSessionId}/messages`);
+  const response = await authFetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${activeSessionId}/messages`);
         if (!response.ok) {
           throw new Error('Failed to load chat history.');
         }
@@ -184,11 +185,10 @@ const ChatPage = () => {
     };
 
     const createNewSession = async (user) => {
-      const response = await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions`, {
+      const response = await authFetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id: user.uid,
           email: user.email,
           display_name: user.displayName,
         }),
@@ -322,7 +322,7 @@ const ChatPage = () => {
     if (!sessionId) return;
     
     try {
-      await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${sessionId}/title`, {
+      await authFetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${sessionId}/title`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title }),
@@ -359,7 +359,7 @@ const ChatPage = () => {
     setIsTyping(true);
     try {
       // Use ask-visual endpoint to get both text and optional chart
-      const response = await fetch(`${API_BASE_URL}/knowledge/ask-visual`, {
+      const response = await authFetch(`${API_BASE_URL}/knowledge/ask-visual`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -445,7 +445,7 @@ const ChatPage = () => {
     
     try {
       // Fetch dashboard data from MongoDB (canonical source)
-      const response = await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${sessionId}/dashboard`);
+  const response = await authFetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${sessionId}/dashboard`);
       if (!response.ok) {
         console.error('No dashboard data found for this session');
         return;
@@ -485,7 +485,7 @@ const ChatPage = () => {
         formData.append('chat_session_id', sessionId);
       }
 
-      const sessionResponse = await fetch(`${API_BASE_URL}/orchestrator/pipeline/session`, {
+      const sessionResponse = await authFetch(`${API_BASE_URL}/orchestrator/pipeline/session`, {
         method: 'POST',
         body: formData,
       });
@@ -501,8 +501,13 @@ const ChatPage = () => {
         throw new Error('Pipeline session ID missing from server response.');
       }
 
+      const accessToken = await auth.currentUser?.getIdToken();
+      if (!accessToken) {
+        throw new Error('Unable to retrieve authentication token for streaming updates.');
+      }
+
       const pipelineResult = await new Promise((resolve, reject) => {
-  const streamUrl = `${API_BASE_URL.replace(/\/+$/, '')}/orchestrator/pipeline/session/${pipelineSessionId}/stream`;
+        const streamUrl = `${API_BASE_URL.replace(/\/+$/, '')}/orchestrator/pipeline/session/${pipelineSessionId}/stream?access_token=${encodeURIComponent(accessToken)}`;
         const eventSource = new EventSource(streamUrl);
 
         eventSource.onmessage = (event) => {
@@ -553,7 +558,7 @@ const ChatPage = () => {
       if (dashboardData && dashboardData.charts && dashboardData.charts.length > 0) {
         // Store in MongoDB via backend API
         try {
-          await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${sessionId}/dashboard`, {
+          await authFetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${sessionId}/dashboard`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

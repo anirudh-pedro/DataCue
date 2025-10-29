@@ -7,11 +7,13 @@ import json
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
 from services.orchestrator_service import OrchestratorService
 from services.knowledge_service import get_shared_service
+from services.chat_service import ChatService, get_chat_service
+from shared.auth import AuthenticatedUser, authenticate_request, get_authenticated_user
 from shared.utils import clean_response
 
 router = APIRouter(prefix="/orchestrator", tags=["orchestrator"])
@@ -20,6 +22,19 @@ service = OrchestratorService(knowledge=get_shared_service())
 
 _SESSION_STORE: Dict[str, Dict[str, Any]] = {}
 _SESSION_LOCK = asyncio.Lock()
+
+
+def _ensure_session_owner(
+    session_id: Optional[str],
+    user: AuthenticatedUser,
+    chat_service: ChatService,
+) -> None:
+    if not session_id:
+        return
+
+    session = chat_service.get_session(session_id)
+    if not session or session.get("user_id") != user.uid:
+        raise HTTPException(status_code=404, detail="Chat session not found")
 
 
 @router.post("/pipeline")
@@ -34,6 +49,8 @@ async def run_pipeline(
     knowledge_generate_recommendations: bool = Form(default=False),
     prediction_options_json: Optional[str] = Form(default=None, description="JSON object with extra prediction options"),
     chat_session_id: Optional[str] = Form(default=None, description="Associated chat session identifier"),
+    current_user: AuthenticatedUser = Depends(get_authenticated_user),
+    chat_service: ChatService = Depends(get_chat_service),
 ):
     try:
         contents = await file.read()
@@ -53,6 +70,8 @@ async def run_pipeline(
             "generate_insights": knowledge_generate_insights,
             "generate_recommendations": knowledge_generate_recommendations,
         }
+
+        _ensure_session_owner(chat_session_id, current_user, chat_service)
 
         result = service.run_pipeline(
             filename=file.filename or "dataset.csv",
@@ -83,6 +102,8 @@ async def create_pipeline_session(
     knowledge_generate_recommendations: bool = Form(default=False),
     prediction_options_json: Optional[str] = Form(default=None, description="JSON object with extra prediction options"),
     chat_session_id: Optional[str] = Form(default=None, description="Associated chat session identifier"),
+    current_user: AuthenticatedUser = Depends(get_authenticated_user),
+    chat_service: ChatService = Depends(get_chat_service),
 ):
     contents = await file.read()
 
@@ -94,6 +115,8 @@ async def create_pipeline_session(
             raise HTTPException(status_code=400, detail=f"Invalid prediction options JSON: {exc}") from exc
 
     session_id = uuid4().hex
+    _ensure_session_owner(chat_session_id, current_user, chat_service)
+
     session_payload = {
         "filename": file.filename or "dataset.csv",
         "content": contents,
@@ -110,6 +133,7 @@ async def create_pipeline_session(
         },
         "prediction_options": prediction_options,
         "chat_session_id": chat_session_id,
+        "user_id": current_user.uid,
     }
 
     async with _SESSION_LOCK:
@@ -119,11 +143,21 @@ async def create_pipeline_session(
 
 
 @router.get("/pipeline/session/{session_id}/stream")
-async def stream_pipeline(session_id: str):
+async def stream_pipeline(
+    session_id: str,
+    access_token: Optional[str] = Query(default=None, alias="access_token"),
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    debug_user_id: Optional[str] = Header(default=None, alias="X-Debug-User", convert_underscores=False),
+):
+    user = authenticate_request(authorization=authorization, token=access_token, debug_user_id=debug_user_id)
+
     async with _SESSION_LOCK:
         session = _SESSION_STORE.pop(session_id, None)
 
     if not session:
+        raise HTTPException(status_code=404, detail="Pipeline session not found or already consumed.")
+
+    if session.get("user_id") != user.uid:
         raise HTTPException(status_code=404, detail="Pipeline session not found or already consumed.")
 
     queue: asyncio.Queue[Optional[Dict[str, Any]]] = asyncio.Queue()

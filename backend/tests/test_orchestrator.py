@@ -1,12 +1,16 @@
 """Integration smoke tests for orchestrator FastAPI app."""
 
+import os
 from io import BytesIO
 
 from fastapi.testclient import TestClient
 
-from main import app
+os.environ.setdefault("DISABLE_FIREBASE_AUTH", "true")
+
+from main import app  # noqa: E402  (import after env configuration)
 
 client = TestClient(app)
+client.headers.update({"X-Debug-User": "test-user"})
 
 
 def _upload_sample_dataset(path: str = "/ingestion/upload"):
@@ -15,6 +19,13 @@ def _upload_sample_dataset(path: str = "/ingestion/upload"):
     response = client.post(path, files=files)
     assert response.status_code == 200
     return response.json()
+
+
+def _create_chat_session() -> str:
+    payload = {"email": "test@example.com", "display_name": "Test User"}
+    response = client.post("/chat/sessions", json=payload)
+    assert response.status_code == 200
+    return response.json()["session_id"]
 
 
 def test_root_health():
@@ -46,15 +57,17 @@ def test_ingestion_and_dashboard_flow():
 
 
 def test_knowledge_analyze_summary():
+    session_id = _create_chat_session()
     ingestion_result = _upload_sample_dataset()
     payload = {
         "data": ingestion_result["data"],
         "generate_insights": False,
         "generate_recommendations": False,
+        "session_id": session_id,
     }
     analyze_response = client.post("/knowledge/analyze", json=payload)
     assert analyze_response.status_code == 200
-    summary_response = client.get("/knowledge/summary")
+    summary_response = client.get(f"/knowledge/summary?session_id={session_id}")
     assert summary_response.status_code == 200
     summary = summary_response.json()
     assert "dataset_size" in summary

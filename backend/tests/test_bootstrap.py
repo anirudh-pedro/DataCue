@@ -1,8 +1,11 @@
 """Minimal smoke tests ensuring key modules import and basic configuration works."""
 
+import os
 from pathlib import Path
 
 import pytest
+
+os.environ.setdefault("DISABLE_FIREBASE_AUTH", "true")
 
 from agents.knowledge_agent.knowledge_agent import KnowledgeAgent
 from agents.prediction_agent.api import prediction_api

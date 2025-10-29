@@ -13,6 +13,7 @@ import KpiCard from '../components/KpiCard';
 import { HiSparkles } from 'react-icons/hi2';
 import { FiArrowLeft, FiX } from 'react-icons/fi';
 import { auth } from '../firebase';
+import { authFetch } from '../utils/authFetch';
 
 const chartRegistry = {
   bar: { component: BarChart, mode: 'plotly' },
@@ -107,7 +108,7 @@ const Dashboard = () => {
         if (sessionId) {
           try {
             const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
-            const response = await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${sessionId}/dashboard`);
+            const response = await authFetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${sessionId}/dashboard`);
             if (response.ok) {
               dashboardData = await response.json();
             }

@@ -1,8 +1,9 @@
 """FastAPI router for ingestion workflows."""
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from services.ingestion_service import IngestionService
+from shared.auth import AuthenticatedUser, get_authenticated_user
 from shared import storage
 from shared.utils import clean_response
 
@@ -13,7 +14,8 @@ service = IngestionService()
 @router.post("/upload")
 async def upload_dataset(
     file: UploadFile = File(..., description="Dataset file (CSV or Excel)"),
-    sheet_name: str | None = Form(default=None)
+    sheet_name: str | None = Form(default=None),
+    current_user: AuthenticatedUser = Depends(get_authenticated_user),
 ):
     try:
         contents = await file.read()
@@ -24,6 +26,6 @@ async def upload_dataset(
 
 
 @router.get("/datasets")
-def list_datasets():
+def list_datasets(current_user: AuthenticatedUser = Depends(get_authenticated_user)):
     datasets = [path.stem for path in storage.DATA_DIR.glob("*.csv")]
     return {"datasets": datasets, "total": len(datasets)}
