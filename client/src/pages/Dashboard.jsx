@@ -13,6 +13,7 @@ import KpiCard from '../components/KpiCard';
 import { HiSparkles } from 'react-icons/hi2';
 import { FiArrowLeft, FiX } from 'react-icons/fi';
 import { auth } from '../firebase';
+import sessionManager from '../utils/sessionManager';
 
 const chartRegistry = {
   bar: { component: BarChart, mode: 'plotly' },
@@ -73,22 +74,22 @@ const Dashboard = () => {
   const [layout, setLayout] = useState(null);
   const [fullscreenChart, setFullscreenChart] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [isCheckingSession, setIsCheckingSession] = useState(true);
 
-  useEffect(() => {
+    useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      const otpVerified = sessionStorage.getItem('otpVerified') === 'true';
-
       if (!user) {
         navigate('/login', { replace: true });
         return;
       }
 
-      if (!otpVerified) {
-        if (user.email) {
-          sessionStorage.setItem('otpEmail', user.email);
-        }
+      if (!sessionManager.isSessionValid()) {
+        sessionManager.clearSession();
         navigate('/verify-otp', { replace: true, state: { email: user.email } });
+        return;
       }
+      
+      setIsCheckingSession(false);
     });
 
     return () => unsubscribe();
@@ -308,6 +309,18 @@ const Dashboard = () => {
       />
     );
   };
+
+  // Show loading state while checking session
+  if (isCheckingSession) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#0d1117]">
+        <div className="text-center">
+          <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-white border-r-transparent"></div>
+          <p className="mt-4 text-sm text-slate-400">Checking session...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen w-screen flex-col bg-[#0d1117] text-slate-100">

@@ -7,6 +7,7 @@ import ChartMessage from '../components/ChartMessage';
 import { FiSend, FiUpload, FiUser } from 'react-icons/fi';
 import { HiSparkles } from 'react-icons/hi2';
 import { auth } from '../firebase';
+import sessionManager from '../utils/sessionManager';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 const STAGE_LABELS = {
@@ -38,6 +39,7 @@ const ChatPage = () => {
   const [sessionId, setSessionId] = useState(() => localStorage.getItem('chatSessionId'));
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [healthWarning, setHealthWarning] = useState('');
+  const [isCheckingSession, setIsCheckingSession] = useState(true);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -93,23 +95,21 @@ const ChatPage = () => {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      const otpVerified = sessionStorage.getItem('otpVerified') === 'true';
       if (!user) {
         navigate('/login', { replace: true });
         setCurrentUser(null);
         return;
       }
 
-      if (!otpVerified) {
-        if (user.email) {
-          sessionStorage.setItem('otpEmail', user.email);
-        }
+      if (!sessionManager.isSessionValid()) {
+        sessionManager.clearSession();
         navigate('/verify-otp', { replace: true, state: { email: user.email } });
         setCurrentUser(null);
         return;
       }
 
       setCurrentUser(user);
+      setIsCheckingSession(false);
     });
 
     return () => unsubscribe();
@@ -619,6 +619,18 @@ const ChatPage = () => {
       setIsTyping(false);
     }
   };
+
+  // Show loading state while checking session
+  if (isCheckingSession) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#0d1117]">
+        <div className="text-center">
+          <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-white border-r-transparent"></div>
+          <p className="mt-4 text-sm text-slate-400">Checking session...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen flex-col bg-black">

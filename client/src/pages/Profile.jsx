@@ -3,35 +3,35 @@ import { useNavigate } from 'react-router-dom';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 import Navbar from '../components/Navbar';
+import sessionManager from '../utils/sessionManager';
 
 const Profile = () => {
   const [user, setUser] = useState(null);
+  const [sessionInfo, setSessionInfo] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      const otpVerified = sessionStorage.getItem('otpVerified') === 'true';
-
       if (!currentUser) {
         navigate('/login', { replace: true });
         return;
       }
 
-      if (!otpVerified) {
-        if (currentUser.email) {
-          sessionStorage.setItem('otpEmail', currentUser.email);
-        }
+      if (!sessionManager.isSessionValid()) {
+        sessionManager.clearSession();
         navigate('/verify-otp', { replace: true, state: { email: currentUser.email } });
         return;
       }
 
       setUser(currentUser);
+      setSessionInfo(sessionManager.getSessionInfo());
     });
 
     return unsubscribe;
   }, [navigate]);
 
   const handleSignOut = async () => {
+    sessionManager.clearSession();
     await signOut(auth);
     window.location.href = '/login';
   };
@@ -81,6 +81,17 @@ const Profile = () => {
                   {user.metadata?.lastSignInTime || '—'}
                 </p>
               </div>
+              {sessionInfo && (
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+                  <p className="text-xs uppercase tracking-wide text-slate-400">Session Valid Until</p>
+                  <p className="mt-2 text-sm font-medium text-white">
+                    {sessionInfo.expires.toLocaleString()}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {sessionInfo.remainingDays}d {sessionInfo.remainingHours}h remaining
+                  </p>
+                </div>
+              )}
             </div>
             <button
               type="button"

@@ -2,27 +2,39 @@ import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from '../firebase';
+import sessionManager from '../utils/sessionManager';
 
 const VerifyOtp = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const [email, setEmail] = useState(() => location.state?.email || sessionStorage.getItem('otpEmail') || '');
+  const [email, setEmail] = useState(() => {
+    return location.state?.email || sessionManager.getEmail() || '';
+  });
   const [otp, setOtp] = useState('');
   const [statusMessage, setStatusMessage] = useState('An OTP has been sent to your email.');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [secondsRemaining, setSecondsRemaining] = useState(300);
+  const [isCheckingSession, setIsCheckingSession] = useState(true);
   const emailServiceUrl = (import.meta.env.VITE_EMAIL_SERVICE_URL ?? 'http://localhost:4000').replace(/\/$/, '');
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      const otpVerified = sessionStorage.getItem('otpVerified') === 'true';
       if (!user) {
         navigate('/login', { replace: true });
-      } else if (otpVerified) {
+        return;
+      }
+
+      // Check if session is already valid
+      if (sessionManager.isSessionValid()) {
         navigate('/chat', { replace: true });
-      } else if (!email && user.email) {
+        return;
+      }
+
+      if (!email && user.email) {
         setEmail(user.email);
       }
+      
+      setIsCheckingSession(false);
     });
     return unsubscribe;
   }, [email, navigate]);
@@ -87,8 +99,13 @@ const VerifyOtp = () => {
         throw new Error(payload.message || 'Invalid or expired code.');
       }
 
-      sessionStorage.setItem('otpVerified', 'true');
-      sessionStorage.setItem('otpEmail', email);
+      // Create a new 4-day session
+      sessionManager.createSession(email);
+      
+      // Show session info
+      const sessionInfo = sessionManager.getSessionInfo();
+      console.log('Session created, expires:', sessionInfo.expires);
+      
       navigate('/chat', { replace: true });
     } catch (error) {
       console.error('OTP verification failed:', error);
@@ -99,8 +116,7 @@ const VerifyOtp = () => {
   };
 
   const handleCancel = async () => {
-    sessionStorage.removeItem('otpVerified');
-    sessionStorage.removeItem('otpEmail');
+    sessionManager.clearSession();
     try {
       await signOut(auth);
     } catch (error) {
@@ -108,6 +124,18 @@ const VerifyOtp = () => {
     }
     navigate('/login', { replace: true });
   };
+
+  // Show loading state while checking session
+  if (isCheckingSession) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#0d1117]">
+        <div className="text-center">
+          <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-white border-r-transparent"></div>
+          <p className="mt-4 text-sm text-slate-400">Checking session...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-[#0d1117] px-4">
