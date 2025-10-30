@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { FcGoogle } from 'react-icons/fc';
 import { useNavigate } from 'react-router-dom';
-import { GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged } from 'firebase/auth';
+import { GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../firebase';
 
 const Login = () => {
@@ -9,25 +9,6 @@ const Login = () => {
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const emailServiceUrl = import.meta.env.VITE_EMAIL_SERVICE_URL ?? 'http://localhost:4000';
-
-  useEffect(() => {
-    const handleRedirectResult = async () => {
-      try {
-        const result = await getRedirectResult(auth);
-        if (result?.user?.email) {
-          await proceedToOtp(result.user.email);
-        }
-      } catch (error) {
-        console.error('Redirect sign-in failed:', error);
-        setErrorMessage('Unable to sign in with Google. Please try again.');
-      } finally {
-        setIsSigningIn(false);
-      }
-    };
-
-    handleRedirectResult();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -79,15 +60,9 @@ const Login = () => {
     setIsSigningIn(true);
 
     try {
-      const isMobile = typeof window !== 'undefined' && window.innerWidth < 640;
-      if (isMobile) {
-        await signInWithRedirect(auth, new GoogleAuthProvider());
-        return;
-      } else {
-        const result = await signInWithPopup(auth, new GoogleAuthProvider());
-        if (result?.user?.email) {
-          await proceedToOtp(result.user.email);
-        }
+      const result = await signInWithPopup(auth, new GoogleAuthProvider());
+      if (result?.user?.email) {
+        await proceedToOtp(result.user.email);
       }
     } catch (error) {
       const code = error?.code || 'auth/error';
