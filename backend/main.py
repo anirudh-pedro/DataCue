@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from routers import (
     chat_router,
     dashboard_router,
+    dashboard_designer_router,
     ingestion_router,
     knowledge_router,
     orchestrator_router,
@@ -42,6 +43,7 @@ app.add_middleware(
 
 app.include_router(ingestion_router.router)
 app.include_router(dashboard_router.router)
+app.include_router(dashboard_designer_router.router)
 app.include_router(knowledge_router.router)
 app.include_router(prediction_router.router)
 app.include_router(orchestrator_router.router)
@@ -54,7 +56,7 @@ def root():
     config = get_config()
     return {
         "status": "ok",
-        "agents": ["ingestion", "dashboard", "knowledge", "prediction"],
+        "agents": ["ingestion", "dashboard", "dashboard-designer", "knowledge", "prediction"],
         "integrations": {
             "mongo": config.has_mongo,
             "groq": config.has_groq,
