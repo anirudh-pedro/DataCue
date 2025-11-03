@@ -53,6 +53,9 @@ class TemplateSection(BaseModel):
     default_chart_type: Optional[ChartType] = None
     allowed_chart_types: List[ChartType] = []
     chart_config: Optional[ChartOption] = None  # User's selected configuration
+    # KPI-specific fields
+    kpi_column: Optional[str] = None  # Column to use for KPI calculation
+    kpi_aggregation: Optional[str] = "sum"  # Aggregation for KPI (sum, avg, count, min, max)
 
 
 class DashboardTemplate(BaseModel):
@@ -99,7 +102,10 @@ class SetSectionRequest(BaseModel):
     dataset_id: str
     template_id: str
     section_id: str
-    chart_config: ChartOption
+    chart_config: Optional[ChartOption] = None  # For chart sections
+    kpi_column: Optional[str] = None  # For KPI sections
+    kpi_aggregation: Optional[str] = "sum"  # For KPI sections
+    dashboard_id: Optional[str] = None  # For updating existing dashboard
 
 
 class DashboardConfig(BaseModel):

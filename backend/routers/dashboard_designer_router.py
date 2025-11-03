@@ -103,17 +103,26 @@ async def set_section(request: SetSectionRequest):
     Configure a specific section in a dashboard
     
     Args:
-        request: SetSectionRequest with dashboard/template/section IDs and chart config
+        request: SetSectionRequest with dashboard/template/section IDs and configuration
         
     Returns:
-        Updated DashboardConfig
+        Updated DashboardConfig with dashboard_id
+        
+    Note:
+        - For chart sections: provide chart_config
+        - For KPI sections: provide kpi_column and kpi_aggregation
+        - First call creates new dashboard (returns dashboard_id)
+        - Subsequent calls should include dashboard_id to update same dashboard
     """
     try:
         dashboard_config = service.set_section_config(
             dataset_id=request.dataset_id,
             template_id=request.template_id,
             section_id=request.section_id,
-            chart_config=request.chart_config
+            chart_config=request.chart_config,
+            kpi_column=request.kpi_column,
+            kpi_aggregation=request.kpi_aggregation,
+            dashboard_id=request.dashboard_id  # Pass dashboard_id from request
         )
         
         return dashboard_config

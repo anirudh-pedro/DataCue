@@ -4,6 +4,7 @@ Business logic for template-based dashboard generation
 """
 import pandas as pd
 import uuid
+import copy
 from typing import List, Dict, Optional
 from datetime import datetime
 
@@ -127,7 +128,9 @@ class DashboardDesignerService:
         dataset_id: str,
         template_id: str,
         section_id: str,
-        chart_config: ChartOption,
+        chart_config: Optional[ChartOption] = None,
+        kpi_column: Optional[str] = None,
+        kpi_aggregation: Optional[str] = "sum",
         dashboard_id: Optional[str] = None
     ) -> DashboardConfig:
         """
@@ -137,7 +140,9 @@ class DashboardDesignerService:
             dataset_id: Dataset identifier
             template_id: Template identifier
             section_id: Section identifier
-            chart_config: Chart configuration
+            chart_config: Chart configuration (for chart sections)
+            kpi_column: Column for KPI calculation (for KPI sections)
+            kpi_aggregation: Aggregation function for KPI (for KPI sections)
             dashboard_id: Optional existing dashboard ID
             
         Returns:
@@ -147,17 +152,22 @@ class DashboardDesignerService:
         df = self._load_dataset(dataset_id)
         dataset_info = self.data_analyzer.analyze_dataset(df, dataset_id)
         
-        # Validate chart configuration
-        is_valid, error_msg = self.data_analyzer.validate_chart_config(
-            dataset_info,
-            chart_config.chart_type,
-            chart_config.x_axis,
-            chart_config.y_axis,
-            chart_config.color_by
-        )
+        # Validate chart configuration if provided
+        if chart_config:
+            is_valid, error_msg = self.data_analyzer.validate_chart_config(
+                dataset_info,
+                chart_config.chart_type,
+                chart_config.x_axis,
+                chart_config.y_axis,
+                chart_config.color_by
+            )
+            
+            if not is_valid:
+                raise ValueError(f"Invalid chart configuration: {error_msg}")
         
-        if not is_valid:
-            raise ValueError(f"Invalid chart configuration: {error_msg}")
+        # Validate KPI configuration if provided
+        if kpi_column and kpi_column not in df.columns:
+            raise ValueError(f"KPI column '{kpi_column}' not found in dataset")
         
         # Load or create dashboard config
         if dashboard_id:
@@ -173,7 +183,7 @@ class DashboardDesignerService:
                 dataset_id=dataset_id,
                 title=template.name,
                 description=template.description,
-                sections=template.sections.copy(),
+                sections=copy.deepcopy(template.sections),  # Deep copy to avoid mutations
                 created_at=datetime.utcnow().isoformat(),
                 updated_at=datetime.utcnow().isoformat()
             )
@@ -181,7 +191,15 @@ class DashboardDesignerService:
         # Update the specific section
         for section in dashboard_config.sections:
             if section.section_id == section_id:
-                section.chart_config = chart_config
+                # Update chart config for chart sections
+                if chart_config:
+                    section.chart_config = chart_config
+                
+                # Update KPI config for KPI sections
+                if kpi_column:
+                    section.kpi_column = kpi_column
+                    section.kpi_aggregation = kpi_aggregation
+                
                 break
         else:
             raise ValueError(f"Section '{section_id}' not found in dashboard")
@@ -307,28 +325,54 @@ class DashboardDesignerService:
     
     def _calculate_kpi(self, df: pd.DataFrame, section: TemplateSection) -> float:
         """Calculate KPI value for a section"""
-        # Simple logic: try to infer from title what to calculate
-        title_lower = section.title.lower()
-        
         # Look for numeric columns
         numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
         
         if not numeric_cols:
             return len(df)  # Return count if no numeric columns
         
-        # Try to match column name from title
+        # Use explicit column if specified
+        if section.kpi_column and section.kpi_column in df.columns:
+            col = section.kpi_column
+            aggregation = section.kpi_aggregation or "sum"
+            
+            if aggregation == "sum":
+                return float(df[col].sum())
+            elif aggregation == "avg" or aggregation == "mean":
+                return float(df[col].mean())
+            elif aggregation == "count":
+                return float(df[col].count())
+            elif aggregation == "min":
+                return float(df[col].min())
+            elif aggregation == "max":
+                return float(df[col].max())
+            else:
+                return float(df[col].sum())
+        
+        # Fallback: Try to infer from title
+        title_lower = section.title.lower()
+        
+        # Try to match column name from title keywords
         for col in numeric_cols:
-            if col.lower() in title_lower or any(word in col.lower() for word in title_lower.split()):
+            col_lower = col.lower()
+            title_words = title_lower.split()
+            
+            # Check if column name appears in title
+            if col_lower in title_lower or any(word in col_lower for word in title_words if len(word) > 3):
                 if 'total' in title_lower or 'sum' in title_lower:
                     return float(df[col].sum())
-                elif 'avg' in title_lower or 'average' in title_lower:
+                elif 'avg' in title_lower or 'average' in title_lower or 'mean' in title_lower:
                     return float(df[col].mean())
                 elif 'count' in title_lower:
                     return float(df[col].count())
+                elif 'min' in title_lower or 'minimum' in title_lower:
+                    return float(df[col].min())
+                elif 'max' in title_lower or 'maximum' in title_lower:
+                    return float(df[col].max())
                 else:
                     return float(df[col].sum())  # Default to sum
         
-        # Default: sum of first numeric column
+        # Last resort: sum of first numeric column
         return float(df[numeric_cols[0]].sum())
     
     def _generate_chart_data(self, df: pd.DataFrame, section: TemplateSection) -> Dict:
@@ -349,8 +393,14 @@ class DashboardDesignerService:
         
         # Apply aggregation if needed
         if config.x_axis and config.y_axis:
-            grouped = df.groupby(config.x_axis)[config.y_axis]
+            # Group and aggregate data
+            if config.color_by:
+                # Group by both x_axis and color_by for multi-series charts
+                grouped = df.groupby([config.x_axis, config.color_by])[config.y_axis]
+            else:
+                grouped = df.groupby(config.x_axis)[config.y_axis]
             
+            # Apply aggregation function
             if config.aggregation == "sum":
                 aggregated = grouped.sum()
             elif config.aggregation == "avg":
@@ -364,22 +414,34 @@ class DashboardDesignerService:
             else:
                 aggregated = grouped.sum()
             
-            chart_data["data"] = {
-                "x": aggregated.index.tolist(),
-                "y": aggregated.values.tolist(),
-                "x_label": config.x_axis,
-                "y_label": config.y_axis
-            }
+            # Handle multi-index (when color_by is present)
+            if config.color_by:
+                aggregated = aggregated.reset_index()
+                chart_data["data"] = {
+                    "x": aggregated[config.x_axis].tolist(),
+                    "y": aggregated[config.y_axis].tolist(),
+                    "color": aggregated[config.color_by].tolist(),
+                    "x_label": config.x_axis,
+                    "y_label": config.y_axis,
+                    "color_label": config.color_by
+                }
+            else:
+                chart_data["data"] = {
+                    "x": aggregated.index.tolist(),
+                    "y": aggregated.values.tolist(),
+                    "x_label": config.x_axis,
+                    "y_label": config.y_axis
+                }
         
         elif config.x_axis:  # Histogram or single-axis chart
             chart_data["data"] = {
                 "x": df[config.x_axis].tolist(),
                 "x_label": config.x_axis
             }
-        
-        # Add color data if specified
-        if config.color_by:
-            chart_data["data"]["color"] = df[config.color_by].tolist()
-            chart_data["data"]["color_label"] = config.color_by
+            
+            # Add color for histograms if specified (for grouped histograms)
+            if config.color_by:
+                chart_data["data"]["color"] = df[config.color_by].tolist()
+                chart_data["data"]["color_label"] = config.color_by
         
         return chart_data
