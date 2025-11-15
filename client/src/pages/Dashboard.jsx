@@ -381,22 +381,22 @@ const Dashboard = () => {
           ) : (
             <>
               {summaryCards.length > 0 && (
-                <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
                   {summaryCards.map((card) => (
                     <div
                       key={card.label}
-                      className="rounded-2xl border border-slate-800/60 bg-slate-900/60 p-4 shadow-lg shadow-black/10"
+                      className="group rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900/80 to-slate-900/40 p-5 shadow-lg shadow-black/20 transition-all hover:border-slate-700/80 hover:shadow-xl hover:shadow-black/30"
                     >
-                      <p className="text-xs font-medium uppercase tracking-wide text-slate-400/90">
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500/90">
                         {card.label}
                       </p>
-                      <p className="mt-3 text-2xl font-semibold text-white">{card.value}</p>
+                      <p className="mt-4 text-3xl font-bold text-white">{card.value}</p>
                       {card.badge ? (
                         <span
-                          className={`mt-4 inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold ${ratingStyles[card.badgeKey] || 'border border-slate-700 bg-slate-800 text-slate-200'
+                          className={`mt-5 inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide ${ratingStyles[card.badgeKey] || 'border border-slate-700 bg-slate-800 text-slate-200'
                             }`}
                         >
-                          <HiSparkles className="text-sm" />
+                          <HiSparkles className="text-xs" />
                           {card.badge}
                         </span>
                       ) : null}
@@ -406,15 +406,15 @@ const Dashboard = () => {
               )}
 
               {datasetInsights.length > 0 && (
-                <section className="rounded-2xl border border-slate-800/60 bg-slate-900/60 p-6 shadow-inner shadow-black/20">
-                  <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-300">
-                    <HiSparkles className="text-base text-sky-400" /> AI Highlights
+                <section className="rounded-2xl border border-sky-900/30 bg-gradient-to-br from-slate-900/80 to-sky-950/20 p-6 shadow-lg shadow-black/30 backdrop-blur-sm">
+                  <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-sky-300">
+                    <HiSparkles className="text-lg text-sky-400" /> Key Insights
                   </h2>
-                  <ul className="mt-4 space-y-3 text-sm text-slate-300">
+                  <ul className="mt-5 space-y-4 text-sm text-slate-200">
                     {datasetInsights.map((insight, index) => (
-                      <li key={`insight-${index}`} className="flex gap-3">
-                        <span className="mt-2 h-1.5 w-1.5 rounded-full bg-sky-500" />
-                        <span>{insight}</span>
+                      <li key={`insight-${index}`} className="flex gap-3 leading-relaxed">
+                        <span className="mt-2 h-2 w-2 flex-shrink-0 rounded-full bg-gradient-to-br from-sky-400 to-indigo-500 shadow-sm shadow-sky-500/50" />
+                        <span className="text-slate-300">{insight}</span>
                       </li>
                     ))}
                   </ul>
@@ -427,7 +427,7 @@ const Dashboard = () => {
                 </section>
               )}
 
-              <section className="grid gap-6 auto-rows-[minmax(280px,1fr)] grid-cols-1 md:grid-cols-2 xl:grid-cols-4">
+              <section className="grid gap-6 auto-rows-[minmax(320px,1fr)] grid-cols-1 md:grid-cols-2 xl:grid-cols-4">
                 {primaryCharts.map((chart, index) => renderChart(chart, `chart-${index}`))}
               </section>
 

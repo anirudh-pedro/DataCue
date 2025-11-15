@@ -1,28 +1,53 @@
 """
 Query Engine Module
-Handles natural language questions about data using Pandas queries
-and caching for fast responses.
+Handles natural language questions about data using LLM-powered analysis.
+Combines Pandas operations with Groq AI for intelligent responses.
 """
 
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Any, Optional, Tuple
 import re
-from datetime import datetime
+from datetime import datetime, date
 import json
+import os
+from groq import Groq
+from core.config import get_settings
+
+
+def json_serializable(obj):
+    """Convert non-JSON-serializable objects to serializable format."""
+    if isinstance(obj, (datetime, date, pd.Timestamp)):
+        return obj.isoformat()
+    elif isinstance(obj, (np.integer, np.int64)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64)):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif pd.isna(obj):
+        return None
+    return obj
 
 
 class QueryEngine:
     """
     Executes queries on data and caches results for fast follow-up questions.
-    Combines Pandas operations with smart query interpretation.
+    Uses Groq LLM for intelligent, context-aware responses.
     """
     
     def __init__(self):
-        """Initialize the Query Engine"""
+        """Initialize the Query Engine with Groq client and configuration"""
         self.query_cache = {}
         self.data = None
         self.profile_data = None
+        
+        # Load settings
+        self.settings = get_settings()
+        
+        # Initialize Groq client
+        self.groq_client = Groq(api_key=self.settings.groq_api_key) if self.settings.groq_api_key else None
+        self.model = self.settings.llm_model
         
     def set_data(self, data: pd.DataFrame, profile_data: Optional[Dict[str, Any]] = None):
         """
@@ -38,7 +63,7 @@ class QueryEngine:
     
     def query(self, question: str, use_cache: bool = True) -> Dict[str, Any]:
         """
-        Execute a natural language query on the data.
+        Execute a natural language query on the data using LLM.
         
         Args:
             question: Natural language question
@@ -54,9 +79,13 @@ class QueryEngine:
             cached_result['from_cache'] = True
             return cached_result
         
-        # Parse question and execute
-        query_type = self._classify_question(question)
-        result = self._execute_query(question, query_type)
+        # Use LLM-powered query if Groq is available
+        if self.groq_client:
+            result = self._llm_powered_query(question)
+        else:
+            # Fallback to rule-based query
+            query_type = self._classify_question(question)
+            result = self._execute_query(question, query_type)
         
         # Cache result
         self.query_cache[question_key] = result
@@ -64,15 +93,342 @@ class QueryEngine:
         
         return result
     
+    def _llm_powered_query(self, question: str) -> Dict[str, Any]:
+        """
+        Use Groq LLM to answer questions about the data intelligently.
+        
+        Args:
+            question: User's natural language question
+            
+        Returns:
+            Dictionary with LLM-generated answer and data analysis
+        """
+        if self.data is None:
+            return {
+                'answer': 'No data loaded. Please load data first.',
+                'query_type': 'llm',
+                'success': False
+            }
+        
+        try:
+            # Prepare dataset summary for LLM (with intelligent column selection)
+            dataset_context = self._prepare_dataset_context(question)
+            
+            # Analyze question and compute relevant data
+            computed_data = self._compute_data_for_question(question)
+            
+            # Build prompt for LLM
+            prompt = self._build_llm_prompt(question, dataset_context, computed_data)
+            
+            # Call Groq API
+            response = self.groq_client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a data analyst assistant. Answer questions about datasets clearly and concisely. Use the provided data context and statistics to give accurate answers. Format numbers nicely. Be direct and helpful."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=self.settings.llm_temperature,
+                max_tokens=self.settings.llm_max_tokens
+            )
+            
+            answer = response.choices[0].message.content.strip()
+            
+            return {
+                'answer': answer,
+                'query_type': 'llm',
+                'success': True,
+                'data': computed_data.get('data', {}),
+                'visualization_suggestion': computed_data.get('viz_suggestion')
+            }
+            
+        except Exception as e:
+            # Fallback to rule-based query on error
+            print(f"LLM query failed: {e}, falling back to rule-based")
+            query_type = self._classify_question(question)
+            return self._execute_query(question, query_type)
+    
+    def _prepare_dataset_context(self, question: str = "") -> str:
+        """Prepare a concise summary of the dataset for LLM context.
+        
+        Args:
+            question: The user's question (used to select relevant columns)
+        """
+        num_rows, num_cols = self.data.shape
+        columns = self.data.columns.tolist()
+        dtypes = self.data.dtypes.to_dict()
+        
+        # Get sample statistics for numeric columns
+        numeric_cols = self.data.select_dtypes(include=[np.number]).columns
+        numeric_stats = {}
+        max_cols = self.settings.max_numeric_columns_context
+        
+        # INTELLIGENT SELECTION: Prioritize columns mentioned in the question
+        question_lower = question.lower() if question else ""
+        relevant_numeric_cols = []
+        other_numeric_cols = []
+        
+        for col in numeric_cols:
+            if col.lower() in question_lower:
+                relevant_numeric_cols.append(col)
+            else:
+                other_numeric_cols.append(col)
+        
+        # Take relevant columns first, then fill with others up to max_cols
+        selected_numeric_cols = relevant_numeric_cols + other_numeric_cols
+        selected_numeric_cols = selected_numeric_cols[:max_cols]
+        
+        for col in selected_numeric_cols:
+            numeric_stats[col] = {
+                'mean': float(round(self.data[col].mean(), 2)),
+                'min': float(round(self.data[col].min(), 2)),
+                'max': float(round(self.data[col].max(), 2))
+            }
+        
+        # Get sample values for categorical columns
+        cat_cols = self.data.select_dtypes(include=['object', 'category']).columns
+        cat_info = {}
+        max_cat_cols = self.settings.max_categorical_columns_context
+        max_unique = self.settings.max_unique_values_display
+        
+        # INTELLIGENT SELECTION: Prioritize categorical columns mentioned in question
+        relevant_cat_cols = []
+        other_cat_cols = []
+        
+        for col in cat_cols:
+            if col.lower() in question_lower:
+                relevant_cat_cols.append(col)
+            else:
+                other_cat_cols.append(col)
+        
+        # Take relevant columns first, then fill with others
+        selected_cat_cols = relevant_cat_cols + other_cat_cols
+        selected_cat_cols = selected_cat_cols[:max_cat_cols]
+        
+        for col in selected_cat_cols:
+            unique_vals = self.data[col].unique()[:max_unique]
+            cat_info[col] = {
+                'unique_count': int(self.data[col].nunique()),
+                'sample_values': [str(v) for v in unique_vals]
+            }
+        
+        context = f"""Dataset Overview:
+- Rows: {num_rows:,}
+- Columns: {num_cols}
+- Column names: {', '.join(columns)}
+
+Numeric Columns Summary:
+{json.dumps(numeric_stats, indent=2)}
+
+Categorical Columns Summary:
+{json.dumps(cat_info, indent=2)}
+"""
+        
+        # Optionally include sample data or full dataset
+        if self.settings.include_sample_data or num_rows <= self.settings.max_full_dataset_rows:
+            # Convert DataFrame to dict and handle special types
+            if num_rows <= self.settings.max_full_dataset_rows:
+                # For small datasets, send entire dataset
+                sample_df = self.data.head(num_rows).copy()
+                # Convert datetime columns to strings
+                for col in sample_df.select_dtypes(include=['datetime64']).columns:
+                    sample_df[col] = sample_df[col].astype(str)
+                sample_data = sample_df.to_dict('records')
+                # Clean any remaining non-serializable objects
+                sample_data = json.loads(json.dumps(sample_data, default=json_serializable))
+                context += f"\n\nFull Dataset (all {num_rows} rows):\n{json.dumps(sample_data, indent=2)}\n"
+            else:
+                # For large datasets, send sample rows
+                sample_df = self.data.head(self.settings.max_sample_rows).copy()
+                # Convert datetime columns to strings
+                for col in sample_df.select_dtypes(include=['datetime64']).columns:
+                    sample_df[col] = sample_df[col].astype(str)
+                sample_data = sample_df.to_dict('records')
+                # Clean any remaining non-serializable objects
+                sample_data = json.loads(json.dumps(sample_data, default=json_serializable))
+                context += f"\n\nSample Data (first {self.settings.max_sample_rows} rows):\n{json.dumps(sample_data, indent=2)}\n"
+        
+        return context
+    
+    def _compute_data_for_question(self, question: str) -> Dict[str, Any]:
+        """
+        Analyze the question and compute relevant statistics.
+        
+        Returns computed data and visualization suggestions.
+        """
+        question_lower = question.lower()
+        result = {'data': {}, 'viz_suggestion': None}
+        
+        # Detect user-provided values for calculations
+        # Pattern: "profit margin is 200" or "threshold is 100" or "target = 50"
+        value_patterns = [
+            (r'profit\s+margin\s+(?:is|=)\s+(\d+(?:\.\d+)?)', 'profit_margin'),
+            (r'threshold\s+(?:is|=)\s+(\d+(?:\.\d+)?)', 'threshold'),
+            (r'target\s+(?:is|=)\s+(\d+(?:\.\d+)?)', 'target'),
+            (r'limit\s+(?:is|=)\s+(\d+(?:\.\d+)?)', 'limit'),
+        ]
+        
+        for pattern, param_name in value_patterns:
+            match = re.search(pattern, question_lower)
+            if match:
+                param_value = float(match.group(1))
+                result['data'][f'user_provided_{param_name}'] = param_value
+                
+                # If profit margin is provided, calculate derived metrics
+                if param_name == 'profit_margin':
+                    numeric_cols = self.data.select_dtypes(include=[np.number]).columns
+                    
+                    # Look for revenue and units_sold columns
+                    revenue_cols = [col for col in numeric_cols if 'revenue' in col.lower()]
+                    units_cols = [col for col in numeric_cols if 'unit' in col.lower() and 'sold' in col.lower()]
+                    
+                    if revenue_cols and units_cols:
+                        revenue_col = revenue_cols[0]
+                        units_col = units_cols[0]
+                        
+                        # Calculate profit = revenue - (units_sold * unit_cost_implied)
+                        # If profit_margin is given, we can find which records exceed it
+                        # Assuming profit = revenue - cost, and margin is the threshold
+                        
+                        # Simple interpretation: Find rows where revenue > profit_margin
+                        filtered_data = self.data[self.data[revenue_col] > param_value]
+                        
+                        result['data']['records_exceeding_profit_margin'] = int(len(filtered_data))
+                        result['data']['profit_margin_threshold'] = param_value
+                        
+                        if len(filtered_data) > 0:
+                            # Get the units_sold values that exceed the margin
+                            exceeding_units = filtered_data[units_col].tolist()
+                            result['data']['units_sold_exceeding_margin'] = [int(u) for u in exceeding_units[:20]]  # Limit to 20
+                            result['data']['total_units_exceeding'] = int(filtered_data[units_col].sum())
+                            result['data']['avg_units_exceeding'] = float(round(filtered_data[units_col].mean(), 2))
+        
+        # Detect "first N" or "last N" row-level queries
+        first_n_match = re.search(r'first\s+(\d+)', question_lower)
+        last_n_match = re.search(r'last\s+(\d+)', question_lower)
+        
+        if first_n_match or last_n_match:
+            n = int(first_n_match.group(1) if first_n_match else last_n_match.group(1))
+            is_first = first_n_match is not None
+            
+            # Find which column is being asked about - use word boundaries to avoid partial matches
+            numeric_cols = self.data.select_dtypes(include=[np.number]).columns
+            
+            # Prioritize columns explicitly mentioned in the question (with word boundaries)
+            target_col = None
+            best_match_len = 0
+            
+            for col in numeric_cols:
+                # Use word boundary or underscore/space separation to avoid false matches
+                # Example: "age" should not match in "average", but should match "age column"
+                col_pattern = r'\b' + re.escape(col.lower()) + r'\b'
+                if re.search(col_pattern, question_lower):
+                    # Prefer longer matches (more specific)
+                    if len(col) > best_match_len:
+                        target_col = col
+                        best_match_len = len(col)
+            
+            # If we found a target column, compute first/last N statistics
+            if target_col:
+                if is_first:
+                    values = self.data[target_col].head(n).tolist()
+                    result['data'][f'{target_col}_first_{n}_values'] = [float(round(v, 2)) for v in values]
+                    result['data'][f'{target_col}_first_{n}_average'] = float(round(self.data[target_col].head(n).mean(), 2))
+                    result['data'][f'{target_col}_first_{n}_sum'] = float(round(self.data[target_col].head(n).sum(), 2))
+                else:
+                    values = self.data[target_col].tail(n).tolist()
+                    result['data'][f'{target_col}_last_{n}_values'] = [float(round(v, 2)) for v in values]
+                    result['data'][f'{target_col}_last_{n}_average'] = float(round(self.data[target_col].tail(n).mean(), 2))
+                    result['data'][f'{target_col}_last_{n}_sum'] = float(round(self.data[target_col].tail(n).sum(), 2))
+        
+        # Detect categorical filtering (e.g., "how many males")
+        cat_cols = self.data.select_dtypes(include=['object', 'category']).columns
+        for col in cat_cols:
+            unique_values = self.data[col].unique()
+            for value in unique_values:
+                if str(value).lower() in question_lower:
+                    # Count for this category
+                    count = int(len(self.data[self.data[col] == value]))
+                    result['data'][f'{col}_{value}_count'] = count
+                    # Convert value_counts to regular dict with int values
+                    distribution = {str(k): int(v) for k, v in self.data[col].value_counts().items()}
+                    result['data'][f'{col}_distribution'] = distribution
+                    result['viz_suggestion'] = {
+                        'type': 'bar_chart',
+                        'x': col,
+                        'y': 'count'
+                    }
+        
+        # Detect numeric aggregations
+        numeric_cols = self.data.select_dtypes(include=[np.number]).columns
+        for col in numeric_cols:
+            if col.lower() in question_lower:
+                result['data'][f'{col}_sum'] = float(round(self.data[col].sum(), 2))
+                result['data'][f'{col}_mean'] = float(round(self.data[col].mean(), 2))
+                result['data'][f'{col}_min'] = float(round(self.data[col].min(), 2))
+                result['data'][f'{col}_max'] = float(round(self.data[col].max(), 2))
+                result['data'][f'{col}_count'] = int(self.data[col].count())
+        
+        # Metadata questions
+        if any(word in question_lower for word in ['column', 'field', 'attribute']):
+            result['data']['total_columns'] = int(len(self.data.columns))
+            result['data']['column_names'] = self.data.columns.tolist()
+        
+        if any(word in question_lower for word in ['row', 'record', 'entry']):
+            result['data']['total_rows'] = int(len(self.data))
+        
+        return result
+    
+    def _build_llm_prompt(self, question: str, dataset_context: str, computed_data: Dict[str, Any]) -> str:
+        """Build the prompt for LLM with question, context, and computed data."""
+        
+        computed_stats = json.dumps(computed_data.get('data', {}), indent=2)
+        
+        prompt = f"""Question: {question}
+
+{dataset_context}
+
+Computed Statistics for this Question:
+{computed_stats}
+
+Instructions:
+1. Answer the question directly and concisely
+2. Use the computed statistics provided
+3. Format numbers with commas for readability (e.g., 1,234 not 1234)
+4. Be specific and accurate
+5. If asking about counts, give the exact number
+6. If the data doesn't contain the answer, say so clearly
+
+Answer:"""
+        
+        return prompt
+    
     def _classify_question(self, question: str) -> str:
         """
         Classify the type of question being asked.
         
         Returns:
             Question type: 'aggregation', 'filtering', 'comparison', 'statistical', 
-                          'top_n', 'distribution', 'correlation', 'temporal'
+                          'top_n', 'distribution', 'correlation', 'temporal', 'metadata'
         """
         question_lower = question.lower()
+        
+        # Metadata/Schema queries (check FIRST before aggregation)
+        metadata_patterns = [
+            r'(how many|what|total|number of)\s+(columns?|fields?|attributes?)',
+            r'(how many|what|total|number of)\s+(rows?|records?|entries?|samples?)',
+            r'(what|show|list|display)\s+(columns?|fields?|attributes?)',
+            r'(dataset|data)\s+(size|shape|dimensions?)',
+            r'(column|field)\s+(names?|list)',
+        ]
+        for pattern in metadata_patterns:
+            if re.search(pattern, question_lower):
+                return 'metadata'
         
         # Top N queries
         if any(word in question_lower for word in ['top', 'bottom', 'highest', 'lowest', 'largest', 'smallest', 'best', 'worst']):
@@ -119,7 +475,9 @@ class QueryEngine:
             }
         
         try:
-            if query_type == 'top_n':
+            if query_type == 'metadata':
+                return self._handle_metadata_query(question)
+            elif query_type == 'top_n':
                 return self._handle_top_n_query(question)
             elif query_type == 'aggregation':
                 return self._handle_aggregation_query(question)
@@ -144,11 +502,110 @@ class QueryEngine:
                 'error': str(e)
             }
     
+    def _handle_metadata_query(self, question: str) -> Dict[str, Any]:
+        """Handle metadata/schema queries about the dataset structure"""
+        question_lower = question.lower()
+        
+        # Determine what metadata is being asked
+        if re.search(r'(how many|what|total|number of)\s+(columns?|fields?|attributes?)', question_lower):
+            # Number of columns
+            num_columns = len(self.data.columns)
+            column_list = ', '.join(self.data.columns.tolist())
+            answer = f"The dataset has **{num_columns} columns**: {column_list}"
+            
+            return {
+                'answer': answer,
+                'query_type': 'metadata',
+                'success': True,
+                'data': {
+                    'total_columns': num_columns,
+                    'columns': self.data.columns.tolist(),
+                    'dtypes': self.data.dtypes.astype(str).to_dict()
+                },
+                'visualization_suggestion': None
+            }
+        
+        elif re.search(r'(how many|what|total|number of)\s+(rows?|records?|entries?|samples?)', question_lower):
+            # Number of rows
+            num_rows = len(self.data)
+            answer = f"The dataset has **{num_rows:,} rows** (records)."
+            
+            return {
+                'answer': answer,
+                'query_type': 'metadata',
+                'success': True,
+                'data': {
+                    'total_rows': num_rows,
+                    'total_columns': len(self.data.columns)
+                },
+                'visualization_suggestion': None
+            }
+        
+        elif re.search(r'(dataset|data)\s+(size|shape|dimensions?)', question_lower):
+            # Dataset shape
+            num_rows, num_columns = self.data.shape
+            memory_usage = self.data.memory_usage(deep=True).sum() / 1024**2  # MB
+            answer = f"**Dataset dimensions**: {num_rows:,} rows × {num_columns} columns\n"
+            answer += f"**Memory usage**: {memory_usage:.2f} MB"
+            
+            return {
+                'answer': answer,
+                'query_type': 'metadata',
+                'success': True,
+                'data': {
+                    'rows': num_rows,
+                    'columns': num_columns,
+                    'memory_mb': round(memory_usage, 2)
+                },
+                'visualization_suggestion': None
+            }
+        
+        elif re.search(r'(column|field)\s+(names?|list)', question_lower) or 'show' in question_lower and 'column' in question_lower:
+            # List column names
+            columns = self.data.columns.tolist()
+            dtypes = self.data.dtypes.astype(str).to_dict()
+            
+            answer = f"**{len(columns)} columns in the dataset:**\n\n"
+            for col in columns:
+                dtype = dtypes.get(col, 'unknown')
+                answer += f"• **{col}** ({dtype})\n"
+            
+            return {
+                'answer': answer.strip(),
+                'query_type': 'metadata',
+                'success': True,
+                'data': {
+                    'columns': columns,
+                    'dtypes': dtypes
+                },
+                'visualization_suggestion': None
+            }
+        
+        else:
+            # General metadata
+            num_rows, num_columns = self.data.shape
+            answer = f"**Dataset Overview:**\n"
+            answer += f"• Rows: {num_rows:,}\n"
+            answer += f"• Columns: {num_columns}\n"
+            answer += f"• Columns list: {', '.join(self.data.columns.tolist())}"
+            
+            return {
+                'answer': answer,
+                'query_type': 'metadata',
+                'success': True,
+                'data': {
+                    'rows': num_rows,
+                    'columns': num_columns,
+                    'column_names': self.data.columns.tolist()
+                },
+                'visualization_suggestion': None
+            }
+    
     def _handle_top_n_query(self, question: str) -> Dict[str, Any]:
         """Handle top N / bottom N queries"""
-        # Extract number (default to 5)
+        # Extract number (use configured default if not specified)
         numbers = re.findall(r'\d+', question)
-        n = int(numbers[0]) if numbers else 5
+        n = int(numbers[0]) if numbers else self.settings.default_top_n
         
         # Determine ascending or descending
         ascending = any(word in question.lower() for word in ['bottom', 'lowest', 'smallest', 'worst'])
@@ -212,6 +669,33 @@ class QueryEngine:
         """Handle aggregation queries (sum, average, count, etc.)"""
         question_lower = question.lower()
         
+        # Check if this is a categorical filter count (e.g., "how many males")
+        cat_cols = self.data.select_dtypes(include=['object', 'category']).columns
+        for col in cat_cols:
+            # Check if column values appear in question
+            unique_values = self.data[col].unique()
+            for value in unique_values:
+                if str(value).lower() in question_lower:
+                    # This is a filter + count query
+                    filtered_count = len(self.data[self.data[col] == value])
+                    answer = f"There are **{filtered_count}** {value} in the {col} column."
+                    
+                    return {
+                        'answer': answer,
+                        'query_type': 'aggregation',
+                        'success': True,
+                        'data': {
+                            'column': col,
+                            'value': str(value),
+                            'count': filtered_count
+                        },
+                        'visualization_suggestion': {
+                            'type': 'bar_chart',
+                            'x': col,
+                            'y': 'count'
+                        }
+                    }
+        
         # Determine aggregation function
         if 'sum' in question_lower or 'total' in question_lower:
             agg_func = 'sum'
@@ -247,7 +731,6 @@ class QueryEngine:
             }
         
         # Check for grouping
-        cat_cols = self.data.select_dtypes(include=['object', 'category']).columns
         group_col = None
         
         for col in cat_cols:
@@ -347,13 +830,13 @@ class QueryEngine:
                 answer = f"The {group_name} with the lowest {value_col} is {best_period.strftime('%Y-%m')} with {best_value:,.2f}"
             else:
                 answer = f"{value_col} by {group_name}:\n"
-                for period, value in result.tail(12).items():  # Last 12 periods
+                for period, value in result.tail(self.settings.max_temporal_periods).items():
                     answer += f"  {period.strftime('%Y-%m')}: {value:,.2f}\n"
         else:
             # Just count by period
             result = self.data.groupby(pd.Grouper(key=date_col, freq=group_freq)).size()
             answer = f"Record count by {group_name}:\n"
-            for period, count in result.tail(12).items():
+            for period, count in result.tail(self.settings.max_temporal_periods).items():
                 answer += f"  {period.strftime('%Y-%m')}: {count}\n"
         
         return {

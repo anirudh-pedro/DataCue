@@ -1,6 +1,5 @@
 """Unified FastAPI application orchestrating all DataCue agents."""
 
-import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -14,7 +13,11 @@ from routers import (
     otp_router,
     prediction_router,
 )
+from core.config import get_settings
 from shared.config import get_config
+
+# Load settings
+settings = get_settings()
 
 app = FastAPI(
     title="DataCue Orchestrator",
@@ -22,20 +25,10 @@ app = FastAPI(
     version="2.0.0",
 )
 
-# Get allowed origins from environment variable or use defaults
-allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "")
-if allowed_origins_env:
-    allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",")]
-else:
-    # Default to localhost for development
-    allowed_origins = [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ]
-
+# Use centralized CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
