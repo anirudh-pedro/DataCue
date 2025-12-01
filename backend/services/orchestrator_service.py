@@ -71,10 +71,12 @@ class OrchestratorService:
 
         data_records = deepcopy(ingest_result.get("data") or [])
         metadata = deepcopy(ingest_result.get("metadata") or {})
+        gridfs_id = ingest_result.get("gridfs_id")
 
         pipeline: Dict[str, Any] = {
             "status": "success",
             "dataset_name": dataset_name,
+            "gridfs_id": gridfs_id,
             "steps": {
                 "ingestion": {
                     key: ingest_result.get(key)
@@ -86,6 +88,7 @@ class OrchestratorService:
                         "dataset_name",
                         "original_shape",
                         "cleaned_shape",
+                        "gridfs_id",
                     )
                     if ingest_result.get(key) is not None
                 },
@@ -95,7 +98,7 @@ class OrchestratorService:
         # Dashboard generation
         emit("generating_summary")
         dashboard_payload = self._dashboard.generate(
-            data=data_records,
+            gridfs_id=gridfs_id,
             metadata=metadata,
             **(dashboard_options or {}),
         )
@@ -127,7 +130,7 @@ class OrchestratorService:
         knowledge_opts = knowledge_options or {}
         emit("computing_insights")
         knowledge_payload = self._knowledge.analyse(
-            data=data_records,
+            gridfs_id=gridfs_id,
             generate_insights=knowledge_opts.get("generate_insights", False),
             generate_recommendations=knowledge_opts.get("generate_recommendations", False),
             session_id=session_id,

@@ -25,3 +25,4 @@ const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 export { firebaseApp, analyticsPromise, auth, googleProvider };
+

@@ -13,7 +13,8 @@ service = get_shared_service()
 
 
 class KnowledgeAnalyseRequest(BaseModel):
-    data: List[Dict[str, Any]] = Field(..., description="Dataset records")
+    data: List[Dict[str, Any]] = Field(default=None, description="Dataset records (optional if gridfs_id provided)")
+    gridfs_id: str = Field(default=None, description="GridFS file ID of the dataset (optional if data provided)")
     generate_insights: bool = Field(default=True)
     generate_recommendations: bool = Field(default=True)
     session_id: str = Field(..., description="Chat session identifier (required)")
@@ -29,6 +30,7 @@ def analyze_dataset(payload: KnowledgeAnalyseRequest):
     try:
         result = service.analyse(
             data=payload.data,
+            gridfs_id=payload.gridfs_id,
             generate_insights=payload.generate_insights,
             generate_recommendations=payload.generate_recommendations,
             session_id=payload.session_id,

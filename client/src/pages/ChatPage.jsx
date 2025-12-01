@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import Sidebar from '../components/Sidebar';
 import Navbar from '../components/Navbar';
 import ChartMessage from '../components/ChartMessage';
@@ -94,7 +94,7 @@ const ChatPage = () => {
   };
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) {
         navigate('/login', { replace: true });
         setCurrentUser(null);
@@ -103,7 +103,12 @@ const ChatPage = () => {
 
       if (!sessionManager.isSessionValid()) {
         sessionManager.clearSession();
-        navigate('/verify-otp', { replace: true, state: { email: user.email } });
+        try {
+          await signOut(auth);
+        } catch (error) {
+          console.error('Error signing out expired session:', error);
+        }
+        navigate('/login', { replace: true });
         setCurrentUser(null);
         return;
       }
@@ -539,6 +544,14 @@ const ChatPage = () => {
       });
 
       const datasetName = pipelineResult?.dataset_name || file.name;
+      const gridfsId = pipelineResult?.gridfs_id;
+      
+      // Store GridFS ID for persistence
+      if (gridfsId) {
+        localStorage.setItem('datasetGridfsId', gridfsId);
+        localStorage.setItem('datasetName', datasetName);
+      }
+      
       setUploadStatusMessage(STAGE_LABELS.pipeline_complete);
       
       // Auto-generate title from filename on first upload
@@ -559,6 +572,7 @@ const ChatPage = () => {
             body: JSON.stringify({
               charts: dashboardData.charts,
               dataset_name: datasetName,
+              gridfs_id: gridfsId,
               summary: dashboardData.summary,
               quality_indicators: dashboardData.quality_indicators,
               metadata_summary: dashboardData.metadata_summary,

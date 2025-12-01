@@ -1,4 +1,10 @@
 # ================================
+# Firebase Credentials
+# ================================
+*firebase*.json
+serviceAccountKey.json
+
+# ================================
 # Python
 # ================================
 __pycache__/
@@ -246,6 +252,11 @@ instance/
 test_exports/
 test_preferences.json
 test_*.json
+test_firebase.ps1
+test_firebase_integration.py
+
+# Temporary sample data
+data/test_*.csv
 
 # Keep important files
 !.gitignore

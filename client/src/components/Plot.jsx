@@ -1,0 +1,8 @@
+// Plotly wrapper component for Vite compatibility
+import React from 'react';
+import Plotly from 'plotly.js-dist-min';
+import createPlotlyComponent from 'react-plotly.js/factory';
+
+const Plot = createPlotlyComponent(Plotly);
+
+export default Plot;

@@ -18,7 +18,13 @@ const VerifyOtp = () => {
   const emailServiceUrl = (import.meta.env.VITE_EMAIL_SERVICE_URL ?? 'http://localhost:4000').replace(/\/$/, '');
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    // If accessing verify-otp without coming from login flow, redirect to login
+    if (!location.state?.email && !sessionManager.getEmail()) {
+      navigate('/login', { replace: true });
+      return;
+    }
+
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) {
         navigate('/login', { replace: true });
         return;
@@ -37,7 +43,7 @@ const VerifyOtp = () => {
       setIsCheckingSession(false);
     });
     return unsubscribe;
-  }, [email, navigate]);
+  }, [email, navigate, location.state?.email]);
 
   useEffect(() => {
     if (!secondsRemaining) return;

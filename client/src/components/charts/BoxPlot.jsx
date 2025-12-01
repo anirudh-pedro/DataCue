@@ -1,5 +1,5 @@
 import { useMemo, useRef } from 'react';
-import Plot from 'react-plotly.js';
+import Plot from '../Plot';
 import DashboardTile from '../DashboardTile';
 
 const BoxPlot = ({ data, layout, title, onFullscreen }) => {

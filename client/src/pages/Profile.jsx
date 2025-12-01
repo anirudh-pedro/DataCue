@@ -19,7 +19,8 @@ const Profile = () => {
 
       if (!sessionManager.isSessionValid()) {
         sessionManager.clearSession();
-        navigate('/verify-otp', { replace: true, state: { email: currentUser.email } });
+        signOut(auth).catch(console.error);
+        navigate('/login', { replace: true });
         return;
       }
 

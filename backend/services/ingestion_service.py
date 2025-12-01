@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 from agents.file_ingestion_agent.ingestion_agent import FileIngestionAgent
 from shared.storage import save_dataset, dataset_path
 from shared.utils import slugify
+from core.gridfs_service import get_gridfs_service
 
 #checking email
 class IngestionService:
@@ -13,8 +14,23 @@ class IngestionService:
 
     def ingest_file(self, filename: str, content: bytes, sheet_name: Optional[str] = None) -> Dict[str, Any]:
         dataset_name = slugify(filename.rsplit(".", 1)[0], fallback="dataset")
+        
+        # Save locally for processing
         save_dataset(dataset_name, content)
         path = dataset_path(dataset_name)
+        
+        # Save to GridFS for persistence
+        gridfs_service = get_gridfs_service()
+        gridfs_id = gridfs_service.save_file(
+            filename=f"{dataset_name}.csv",
+            content=content,
+            metadata={
+                "original_filename": filename,
+                "dataset_name": dataset_name
+            }
+        )
+        
+        # Process file with agent
         result = self._agent.ingest_file(str(path), sheet_name=sheet_name)
         metadata = result.get("metadata", {}) or {}
         if metadata.get("columns"):
@@ -42,4 +58,5 @@ class IngestionService:
         if metadata:
             result["metadata"] = metadata
         result["dataset_name"] = dataset_name
+        result["gridfs_id"] = gridfs_id
         return result

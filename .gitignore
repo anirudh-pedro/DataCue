@@ -1,0 +1,58 @@
+# OS / Editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Environment variables
+.env
+.env.*
+*.env
+*.env.*
+
+# Python cache & artifacts
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pycache
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+virtualenv/
+.virtualenv/
+backend/venv/
+backend/.venv/
+backend/env/
+backend/.env
+
+# Node / front-end builds
+node_modules/
+client/node_modules/
+email-service/node_modules/
+dist/
+client/dist/
+email-service/dist/
+
+# Logs & coverage
+*.log
+logs/
+coverage/
+.coverage
+.pytest_cache/
+
+# Local data & exports
+datasets/
+exports/
+backend/exports/
+backend/uploads/
+
+# VS Code / IDE
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.code-workspace

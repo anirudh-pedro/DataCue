@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import Plot from 'react-plotly.js';
+import Plot from './Plot';
 import { HiSparkles } from 'react-icons/hi2';
 import { FiDownload, FiMaximize2 } from 'react-icons/fi';
 

@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { FcGoogle } from 'react-icons/fc';
 import { useNavigate } from 'react-router-dom';
-import { GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from 'firebase/auth';
+import { GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 import sessionManager from '../utils/sessionManager';
 
@@ -11,6 +11,7 @@ const Login = () => {
   const [errorMessage, setErrorMessage] = useState('');
   const [isCheckingSession, setIsCheckingSession] = useState(true);
   const emailServiceUrl = import.meta.env.VITE_EMAIL_SERVICE_URL ?? 'http://localhost:4000';
+  const signInInProgressRef = useRef(false);
 
   useEffect(() => {
     // Migrate old sessions if they exist
@@ -18,7 +19,7 @@ const Login = () => {
   }, []);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) {
         setIsCheckingSession(false);
         return;
@@ -27,12 +28,26 @@ const Login = () => {
       // Check if session is valid
       if (sessionManager.isSessionValid()) {
         navigate('/chat', { replace: true });
-      } else {
-        if (user.email) {
-          sessionManager.clearSession(); // Clear any invalid session data
-        }
-        navigate('/verify-otp', { replace: true, state: { email: user.email } });
+        return;
       }
+
+      // If a manual sign-in is in progress, let the OTP flow handle navigation
+      if (signInInProgressRef.current) {
+        return;
+      }
+
+      // Otherwise sign out stale Firebase auth sessions so the user sees the login page
+      if (user.email) {
+        sessionManager.clearSession();
+      }
+
+      try {
+        await signOut(auth);
+      } catch (error) {
+        console.error('Failed to sign out expired Firebase session:', error);
+      }
+
+      setIsCheckingSession(false);
     });
 
     return () => unsubscribe();
@@ -65,6 +80,7 @@ const Login = () => {
   const handleGoogleSignIn = async () => {
     setErrorMessage('');
     setIsSigningIn(true);
+    signInInProgressRef.current = true;
 
     try {
       const result = await signInWithPopup(auth, new GoogleAuthProvider());
@@ -78,6 +94,7 @@ const Login = () => {
       }
     } finally {
       setIsSigningIn(false);
+      signInInProgressRef.current = false;
     }
   };
 

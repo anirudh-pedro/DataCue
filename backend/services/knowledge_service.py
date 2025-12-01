@@ -8,6 +8,7 @@ import pandas as pd
 
 from agents.knowledge_agent.knowledge_agent import KnowledgeAgent
 from shared.config import get_config
+from core.gridfs_service import get_gridfs_service
 
 
 class KnowledgeService:
@@ -79,14 +80,24 @@ class KnowledgeService:
 
     def analyse(
         self,
-        data: List[Dict[str, Any]],
+        data: List[Dict[str, Any]] = None,
+        gridfs_id: str = None,
         generate_insights: bool = True,
         generate_recommendations: bool = True,
         session_id: str = None,
     ) -> Dict[str, Any]:
         """Analyze dataset and store agent for the session."""
         session_key = self._validate_session_id(session_id)
-        dataframe = pd.DataFrame(data)
+        
+        # Load from GridFS if ID provided, otherwise use data
+        if gridfs_id:
+            gridfs_service = get_gridfs_service()
+            file_stream = gridfs_service.get_file_stream(gridfs_id)
+            dataframe = pd.read_csv(file_stream)
+        elif data:
+            dataframe = pd.DataFrame(data)
+        else:
+            raise ValueError("Either 'data' or 'gridfs_id' must be provided")
 
         agent = KnowledgeAgent(groq_api_key=self._groq_api_key)
         result = agent.analyze_dataset(
@@ -94,6 +105,11 @@ class KnowledgeService:
             generate_insights=generate_insights,
             generate_recommendations=generate_recommendations,
         )
+        
+        # Store gridfs_id in agent metadata for later use
+        if gridfs_id:
+            agent._gridfs_id = gridfs_id
+            
         self._store_agent(session_key, agent)
         return result
 

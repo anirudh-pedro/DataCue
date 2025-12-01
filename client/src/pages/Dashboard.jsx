@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import BarChart from '../components/charts/BarChart';
 import LineChart from '../components/charts/LineChart';
 import ScatterPlot from '../components/charts/ScatterPlot';
@@ -63,6 +63,423 @@ const PRIMARY_CHART_LIMIT = 4;
 const MAX_KPI_CARDS = 2;
 const MAX_DATASET_INSIGHTS = 3;
 
+const splitCsvLine = (line = '') => {
+  const cells = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === '"') {
+      const next = line[index + 1];
+      if (next === '"') {
+        current += '"';
+        index += 1;
+        continue;
+      }
+      inQuotes = !inQuotes;
+      continue;
+    }
+
+    if (char === ',' && !inQuotes) {
+      cells.push(current.trim());
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  cells.push(current.trim());
+  return cells;
+};
+
+const parseCsvText = (text) => {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  if (!lines.length) {
+    throw new Error('The CSV file is empty.');
+  }
+
+  const headers = splitCsvLine(lines[0]);
+  if (!headers.length) {
+    throw new Error('Unable to detect columns inside the CSV.');
+  }
+
+  const rows = lines.slice(1).map((line) => {
+    const values = splitCsvLine(line);
+    const record = {};
+    headers.forEach((header, index) => {
+      record[header] = values[index] ?? '';
+    });
+    return record;
+  });
+
+  if (!rows.length) {
+    throw new Error('No data rows were found in the CSV file.');
+  }
+
+  return { headers, rows };
+};
+
+const parseNumericValue = (rawValue) => {
+  if (rawValue === null || rawValue === undefined) {
+    return Number.NaN;
+  }
+  const normalized = String(rawValue).replace(/,/g, '').trim();
+  if (!normalized) {
+    return Number.NaN;
+  }
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+};
+
+const isParsableDate = (value) => {
+  if (!value) {
+    return false;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp);
+};
+
+const inferColumnProfiles = (rows, headers) => {
+  const profiles = {
+    allColumns: headers,
+    numeric: [],
+    categorical: [],
+    time: [],
+  };
+
+        <input
+          type="file"
+          accept=".csv,text/csv"
+          ref={fileInputRef}
+          className="hidden"
+          onChange={handleLocalCsvUpload}
+        />
+  headers.forEach((header) => {
+    const values = rows.map((row) => row[header]).filter((value) => value !== undefined && value !== null);
+    if (!values.length) {
+      profiles.categorical.push(header);
+      return;
+    }
+
+    const numericCount = values.reduce((count, value) => {
+      const parsed = parseNumericValue(value);
+      return Number.isFinite(parsed) ? count + 1 : count;
+    }, 0);
+
+              <div className="mt-6 flex flex-col gap-3">
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  type="button"
+                  className="rounded-xl border border-slate-700 bg-slate-900 px-5 py-2 text-sm font-medium text-white transition hover:border-slate-500"
+                >
+                  Build dashboard from CSV
+                </button>
+                <button
+                  onClick={() => navigate('/chat')}
+                  type="button"
+                  className="rounded-xl bg-white px-5 py-2 text-sm font-medium text-[#0d1117] transition hover:bg-slate-200"
+                >
+                  Upload via conversational flow
+                </button>
+                {csvError ? renderCsvError() : null}
+                <p className="text-xs text-slate-500">Accepted format: .csv up to 5MB.</p>
+              </div>
+    if (dateCount / values.length >= 0.6) {
+      profiles.time.push(header);
+      return;
+    }
+
+    profiles.categorical.push(header);
+  });
+
+  return profiles;
+};
+
+const aggregateByCategory = (rows, categoryColumn, valueColumn) => {
+  const totals = new Map();
+  rows.forEach((row) => {
+    const category = row[categoryColumn] || 'Unknown';
+    const value = parseNumericValue(row[valueColumn]);
+    if (!Number.isFinite(value)) {
+      return;
+    }
+    totals.set(category, (totals.get(category) ?? 0) + value);
+  });
+  return Array.from(totals.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 12);
+};
+
+const createHistogramChart = (rows, column) => {
+  const series = rows
+    .map((row) => parseNumericValue(row[column]))
+    .filter((value) => Number.isFinite(value));
+  if (series.length < 5) {
+    return null;
+  }
+  return {
+    id: `hist-${column}`,
+    type: 'histogram',
+    title: `${column} distribution`,
+    figure: {
+      data: [
+        {
+          type: 'histogram',
+          x: series,
+          marker: { color: '#38bdf8' },
+        },
+      ],
+      layout: {
+        margin: { t: 40, r: 20, b: 40, l: 50 },
+        paper_bgcolor: 'transparent',
+        plot_bgcolor: 'transparent',
+        font: { color: '#e2e8f0' },
+      },
+    },
+  };
+};
+
+const createBarChart = (rows, categoryColumn, valueColumn) => {
+  const aggregated = aggregateByCategory(rows, categoryColumn, valueColumn);
+  if (!aggregated.length) {
+    return null;
+  }
+  const labels = aggregated.map(([label]) => label);
+  const values = aggregated.map(([, value]) => value);
+  return {
+    id: `bar-${categoryColumn}`,
+    type: 'bar',
+    title: `${valueColumn} by ${categoryColumn}`,
+    figure: {
+      data: [
+        {
+          type: 'bar',
+          x: labels,
+          y: values,
+          marker: { color: '#818cf8' },
+        },
+      ],
+      layout: {
+        margin: { t: 40, r: 20, b: 80, l: 50 },
+        paper_bgcolor: 'transparent',
+        plot_bgcolor: 'transparent',
+        font: { color: '#e2e8f0' },
+      },
+    },
+  };
+};
+
+const createLineChart = (rows, timeColumn, valueColumn) => {
+  const grouped = new Map();
+  rows.forEach((row) => {
+    const rawDate = row[timeColumn];
+    if (!isParsableDate(rawDate)) {
+      return;
+    }
+    const value = parseNumericValue(row[valueColumn]);
+    if (!Number.isFinite(value)) {
+      return;
+    }
+    const dateKey = new Date(rawDate).toISOString().split('T')[0];
+    grouped.set(dateKey, (grouped.get(dateKey) ?? 0) + value);
+  });
+
+  if (!grouped.size) {
+    return null;
+  }
+
+  const sortedEntries = Array.from(grouped.entries()).sort((a, b) => (a[0] > b[0] ? 1 : -1));
+  return {
+    id: `line-${valueColumn}`,
+    type: 'line',
+    title: `${valueColumn} over time`,
+    figure: {
+      data: [
+        {
+          type: 'scatter',
+          mode: 'lines+markers',
+          x: sortedEntries.map(([date]) => date),
+          y: sortedEntries.map(([, value]) => value),
+          line: { color: '#34d399', width: 3 },
+          marker: { color: '#10b981' },
+        },
+      ],
+      layout: {
+        margin: { t: 40, r: 20, b: 40, l: 50 },
+        paper_bgcolor: 'transparent',
+        plot_bgcolor: 'transparent',
+        font: { color: '#e2e8f0' },
+      },
+    },
+  };
+};
+
+const createScatterChart = (rows, xColumn, yColumn, colorColumn) => {
+  const points = rows
+    .map((row) => {
+      const x = parseNumericValue(row[xColumn]);
+      const y = parseNumericValue(row[yColumn]);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        return null;
+      }
+      return {
+        x,
+        y,
+        color: colorColumn ? row[colorColumn] : undefined,
+      };
+    })
+    .filter(Boolean);
+
+  if (points.length < 5) {
+    return null;
+  }
+
+  return {
+    id: `scatter-${xColumn}-${yColumn}`,
+    type: 'scatter',
+    title: `${yColumn} vs ${xColumn}`,
+    figure: {
+      data: [
+        {
+          type: 'scatter',
+          mode: 'markers',
+          x: points.map((point) => point.x),
+          y: points.map((point) => point.y),
+          marker: {
+            color: points.map((point) => point.color || '#93c5fd'),
+            size: 10,
+            opacity: 0.8,
+          },
+        },
+      ],
+      layout: {
+        margin: { t: 40, r: 40, b: 40, l: 50 },
+        paper_bgcolor: 'transparent',
+        plot_bgcolor: 'transparent',
+        font: { color: '#e2e8f0' },
+      },
+    },
+  };
+};
+
+const generateChartsFromCsv = (rows, profiles) => {
+  const charts = [];
+
+  profiles.numeric.slice(0, 2).forEach((column) => {
+    const histogram = createHistogramChart(rows, column);
+    if (histogram) {
+      charts.push(histogram);
+    }
+  });
+
+  if (profiles.time.length && profiles.numeric.length) {
+    const lineChart = createLineChart(rows, profiles.time[0], profiles.numeric[0]);
+    if (lineChart) {
+      charts.push(lineChart);
+    }
+  }
+
+  if (profiles.categorical.length && profiles.numeric.length) {
+    const barChart = createBarChart(rows, profiles.categorical[0], profiles.numeric[0]);
+    if (barChart) {
+      charts.push(barChart);
+    }
+  }
+
+  if (profiles.numeric.length >= 2) {
+    const scatter = createScatterChart(
+      rows,
+      profiles.numeric[0],
+      profiles.numeric[1],
+      profiles.categorical[0]
+    );
+    if (scatter) {
+      charts.push(scatter);
+    }
+  }
+
+  return charts;
+};
+
+const buildDatasetInsights = (rows, profiles) => {
+  const insights = [];
+  const rowCount = rows.length.toLocaleString();
+  const columnCount = profiles.allColumns.length;
+  insights.push(`Detected ${rowCount} rows across ${columnCount} columns.`);
+
+  if (profiles.numeric.length) {
+    const column = profiles.numeric[0];
+    const values = rows
+      .map((row) => parseNumericValue(row[column]))
+      .filter((value) => Number.isFinite(value));
+    if (values.length) {
+      const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+      insights.push(`${column} averages ${average.toFixed(2)} based on the uploaded file.`);
+    }
+  }
+
+  if (profiles.categorical.length) {
+    const column = profiles.categorical[0];
+    const frequency = rows.reduce((acc, row) => {
+      const key = row[column] || 'Unknown';
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {});
+    const sorted = Object.entries(frequency).sort((a, b) => b[1] - a[1]);
+    if (sorted.length) {
+      const [topValue, count] = sorted[0];
+      insights.push(`${topValue} appears ${count.toLocaleString()} times in ${column}.`);
+    }
+  }
+
+  return insights.slice(0, MAX_DATASET_INSIGHTS);
+};
+
+const buildMetadataSummary = (rows, profiles, chartCount) => ({
+  total_charts: chartCount,
+  dataset_rows: rows.length,
+  dataset_columns: profiles.allColumns.length,
+  insights_generated: true,
+});
+
+const buildQualityIndicators = (rows, profiles) => {
+  const totalCells = rows.length * Math.max(profiles.allColumns.length, 1);
+  let emptyCells = 0;
+  rows.forEach((row) => {
+    profiles.allColumns.forEach((column) => {
+      if (row[column] === undefined || row[column] === null || row[column] === '') {
+        emptyCells += 1;
+      }
+    });
+  });
+
+  const completenessScore = totalCells ? Math.round(((totalCells - emptyCells) / totalCells) * 100) : 0;
+  const structureScore = Math.round(
+    ((profiles.numeric.length + profiles.time.length * 0.8) / Math.max(profiles.allColumns.length, 1)) * 100
+  );
+  const overallScore = Math.max(45, Math.min(95, Math.round((completenessScore + structureScore) / 2)));
+
+  let rating = 'fair';
+  if (overallScore >= 85) {
+    rating = 'excellent';
+  } else if (overallScore >= 70) {
+    rating = 'good';
+  } else if (overallScore < 55) {
+    rating = 'poor';
+  }
+
+  return {
+    overall_score: overallScore,
+    rating,
+  };
+};
+
 const Dashboard = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -75,9 +492,57 @@ const Dashboard = () => {
   const [fullscreenChart, setFullscreenChart] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isCheckingSession, setIsCheckingSession] = useState(true);
+  const [csvError, setCsvError] = useState('');
+  const fileInputRef = useRef(null);
 
-    useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+  const buildDashboardFromCsv = async (file) => {
+    setCsvError('');
+    setLoading(true);
+    try {
+      const text = await file.text();
+      const { headers, rows } = parseCsvText(text);
+      const profiles = inferColumnProfiles(rows, headers);
+      const generatedCharts = generateChartsFromCsv(rows, profiles);
+
+      if (!generatedCharts.length) {
+        throw new Error('Unable to generate charts from this CSV. Please ensure it has numeric and categorical columns.');
+      }
+
+      const insights = buildDatasetInsights(rows, profiles);
+      const metadataSummary = buildMetadataSummary(rows, profiles, generatedCharts.length);
+      const quality = buildQualityIndicators(rows, profiles);
+
+      setDatasetName(file.name.replace(/\.[^.]+$/, '') || 'Uploaded Dataset');
+      setSummary({ dataset_insights: insights });
+      setMetadataSummary(metadataSummary);
+      setQualityIndicators(quality);
+      setCharts(generatedCharts);
+      setLayout(null);
+    } catch (error) {
+      console.error('Failed to create dashboard from CSV:', error);
+      setCsvError(error.message || 'Unable to process this CSV file.');
+      setCharts([]);
+      setSummary(null);
+      setMetadataSummary(null);
+      setQualityIndicators(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLocalCsvUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+    await buildDashboardFromCsv(file);
+    // Reset input so the same file can be selected again
+    // eslint-disable-next-line no-param-reassign
+    event.target.value = '';
+  };
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) {
         navigate('/login', { replace: true });
         return;
@@ -85,7 +550,12 @@ const Dashboard = () => {
 
       if (!sessionManager.isSessionValid()) {
         sessionManager.clearSession();
-        navigate('/verify-otp', { replace: true, state: { email: user.email } });
+        try {
+          await signOut(auth);
+        } catch (error) {
+          console.error('Error signing out expired session:', error);
+        }
+        navigate('/login', { replace: true });
         return;
       }
       
@@ -98,6 +568,7 @@ const Dashboard = () => {
   useEffect(() => {
     const loadDashboard = async () => {
       setLoading(true);
+      setCsvError('');
       
       // First check if data was passed via navigation state
       let dashboardData = location.state?.dashboardData;
@@ -275,6 +746,12 @@ const Dashboard = () => {
     [summary]
   );
 
+  const renderCsvError = () => (
+    <div className="rounded-xl border border-rose-500/50 bg-rose-500/10 px-4 py-3 text-left text-xs text-rose-200">
+      {csvError}
+    </div>
+  );
+
   const renderChart = (chart, key, options = {}) => {
     const { fullscreen = false } = options;
     const rawType = chart.type?.toLowerCase?.() ?? 'unknown';
@@ -358,6 +835,13 @@ const Dashboard = () => {
       </header>
 
       <main className="flex-1 overflow-y-auto">
+        <input
+          type="file"
+          accept=".csv,text/csv"
+          ref={fileInputRef}
+          className="hidden"
+          onChange={handleLocalCsvUpload}
+        />
         <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-8 px-6 pb-12 pt-6">
           {loading ? (
             <div className="flex h-[60vh] items-center justify-center text-sm text-slate-400">
@@ -368,15 +852,26 @@ const Dashboard = () => {
               <HiSparkles className="mb-4 text-5xl text-slate-600" />
               <h2 className="text-xl font-semibold text-white">No visualizations yet</h2>
               <p className="mt-2 max-w-md text-sm text-slate-400">
-                Upload a dataset from the chat experience to generate an interactive dashboard automatically.
+                Upload a dataset from the chat experience or use a CSV file to generate an interactive dashboard automatically.
               </p>
-              <button
-                onClick={() => navigate('/chat')}
-                type="button"
-                className="mt-6 rounded-xl bg-white px-5 py-2 text-sm font-medium text-[#0d1117] transition hover:bg-slate-200"
-              >
-                Upload a dataset
-              </button>
+              <div className="mt-6 flex flex-col gap-3">
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  type="button"
+                  className="rounded-xl border border-slate-700 bg-slate-900 px-5 py-2 text-sm font-medium text-white transition hover:border-slate-500"
+                >
+                  Build dashboard from CSV
+                </button>
+                <button
+                  onClick={() => navigate('/chat')}
+                  type="button"
+                  className="rounded-xl bg-white px-5 py-2 text-sm font-medium text-[#0d1117] transition hover:bg-slate-200"
+                >
+                  Upload via conversational flow
+                </button>
+                {csvError ? renderCsvError() : null}
+                <p className="text-xs text-slate-500">Accepted format: .csv up to 5MB.</p>
+              </div>
             </div>
           ) : (
             <>
