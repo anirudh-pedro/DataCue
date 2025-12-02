@@ -13,11 +13,17 @@ service = IngestionService()
 @router.post("/upload")
 async def upload_dataset(
     file: UploadFile = File(..., description="Dataset file (CSV or Excel)"),
-    sheet_name: str | None = Form(default=None)
+    sheet_name: str | None = Form(default=None),
+    session_id: str | None = Form(default=None, description="Optional session ID for MongoDB storage")
 ):
     try:
         contents = await file.read()
-        result = service.ingest_file(filename=file.filename, content=contents, sheet_name=sheet_name)
+        result = service.ingest_file(
+            filename=file.filename,
+            content=contents,
+            sheet_name=sheet_name,
+            session_id=session_id
+        )
         return clean_response(result)
     except Exception as exc:  # pragma: no cover - defensive
         raise HTTPException(status_code=500, detail=str(exc)) from exc

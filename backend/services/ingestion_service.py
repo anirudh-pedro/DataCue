@@ -1,18 +1,21 @@
 """Service layer wrapping the File Ingestion Agent."""
 
 from typing import Any, Dict, Optional
+import uuid
 
 from agents.file_ingestion_agent.ingestion_agent import FileIngestionAgent
 from shared.storage import save_dataset, dataset_path
 from shared.utils import slugify
 from core.gridfs_service import get_gridfs_service
+from services.dataset_service import get_dataset_service
 
 #checking email
 class IngestionService:
     def __init__(self) -> None:
         self._agent = FileIngestionAgent()
+        self._dataset_service = get_dataset_service()
 
-    def ingest_file(self, filename: str, content: bytes, sheet_name: Optional[str] = None) -> Dict[str, Any]:
+    def ingest_file(self, filename: str, content: bytes, sheet_name: Optional[str] = None, session_id: Optional[str] = None) -> Dict[str, Any]:
         dataset_name = slugify(filename.rsplit(".", 1)[0], fallback="dataset")
         
         # Save locally for processing
@@ -59,4 +62,33 @@ class IngestionService:
             result["metadata"] = metadata
         result["dataset_name"] = dataset_name
         result["gridfs_id"] = gridfs_id
+        
+        # Store dataset rows in MongoDB for Groq querying
+        if self._dataset_service.is_enabled and result.get("dataframe") is not None:
+            dataset_id = str(uuid.uuid4())
+            effective_session_id = session_id or dataset_id  # Use provided session or generate one
+            
+            store_result = self._dataset_service.store_dataset(
+                session_id=effective_session_id,
+                dataset_id=dataset_id,
+                dataset_name=dataset_name,
+                dataframe=result["dataframe"],
+                metadata=metadata
+            )
+            
+            if store_result.get("success"):
+                result["mongo_storage"] = {
+                    "enabled": True,
+                    "session_id": effective_session_id,
+                    "dataset_id": dataset_id,
+                    "rows_stored": store_result.get("rows_stored"),
+                }
+            else:
+                result["mongo_storage"] = {
+                    "enabled": False,
+                    "error": store_result.get("error")
+                }
+        else:
+            result["mongo_storage"] = {"enabled": False}
+        
         return result

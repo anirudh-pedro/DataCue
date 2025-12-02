@@ -6,10 +6,12 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from services.knowledge_service import get_shared_service
+from services.mongo_query_service import get_mongo_query_service
 from shared.utils import clean_response
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 service = get_shared_service()
+mongo_query_service = get_mongo_query_service()
 
 
 class KnowledgeAnalyseRequest(BaseModel):
@@ -83,3 +85,45 @@ def get_summary(session_id: str):
         return clean_response(service.summary(session_id=session_id))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+class AskMongoRequest(BaseModel):
+    question: str = Field(..., description="Natural language question to translate into MongoDB query")
+    session_id: str = Field(..., description="Session ID with stored dataset")
+
+
+@router.post("/ask-mongo")
+def ask_mongo_question(payload: AskMongoRequest):
+    """
+    Answer questions using Groq-generated MongoDB queries against stored dataset rows.
+    
+    This endpoint:
+    1. Retrieves the dataset metadata for the session
+    2. Uses Groq to generate a MongoDB aggregation pipeline
+    3. Executes the pipeline against the stored dataset
+    4. Returns structured results with answer summary and data
+    """
+    try:
+        if not mongo_query_service.is_enabled:
+            raise HTTPException(
+                status_code=503,
+                detail="MongoDB-backed querying is not configured. Set MONGO_URI and GROQ_API_KEY environment variables."
+            )
+        
+        result = mongo_query_service.ask(
+            session_id=payload.session_id,
+            question=payload.question
+        )
+        
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=400,
+                detail=result.get("error", "Failed to process question")
+            )
+        
+        return clean_response(result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
