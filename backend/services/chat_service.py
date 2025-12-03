@@ -140,7 +140,9 @@ class ChatService:
                 self._client = MongoClient(self._config.mongo_uri, serverSelectionTimeoutMS=2_000)
                 # Trigger connection test
                 self._client.admin.command("ping")
-                db = self._client.get_default_database() or self._client["datacue"]
+                db = self._client.get_default_database()
+                if db is None:
+                    db = self._client["datacue"]
                 self._sessions = db["chat_sessions"]
                 self._messages = db["chat_messages"]
                 
@@ -166,7 +168,7 @@ class ChatService:
 
     # Session management -------------------------------------------------
     def create_session(self, user_id: str, email: Optional[str], display_name: Optional[str]) -> Dict[str, Any]:
-        if not self._sessions:
+        if self._sessions is None:
             return self._fallback.create_session(user_id, email, display_name)
 
         session_id = uuid4().hex
@@ -189,7 +191,7 @@ class ChatService:
         }
 
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
-        if not self._sessions:
+        if self._sessions is None:
             return self._fallback.get_session(session_id)
         document = self._sessions.find_one({"_id": session_id})
         if not document:
@@ -205,7 +207,7 @@ class ChatService:
 
     # Message management -------------------------------------------------
     def list_messages(self, session_id: str) -> List[Dict[str, Any]]:
-        if not self._messages:
+        if self._messages is None:
             return self._fallback.list_messages(session_id)
         cursor = self._messages.find({"session_id": session_id}).sort("created_at", ASCENDING)
         messages = []
@@ -227,7 +229,7 @@ class ChatService:
     def append_message(self, session_id: str, user_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         message = ChatMessage.from_payload(session_id=session_id, user_id=user_id, payload=payload)
 
-        if not self._messages:
+        if self._messages is None:
             self._fallback.append_message(message)
         else:
             document = message.to_dict()
@@ -243,7 +245,7 @@ class ChatService:
     # Dashboard data management ------------------------------------------
     def store_dashboard_data(self, session_id: str, dashboard_data: Dict[str, Any]) -> None:
         """Store dashboard data for a session in MongoDB (canonical source)."""
-        if not self._sessions:
+        if self._sessions is None:
             self._fallback.store_dashboard_data(session_id, dashboard_data)
         else:
             self._sessions.update_one(
@@ -259,7 +261,7 @@ class ChatService:
 
     def get_dashboard_data(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve dashboard data for a session from MongoDB."""
-        if not self._sessions:
+        if self._sessions is None:
             return self._fallback.get_dashboard_data(session_id)
         
         session = self._sessions.find_one({"_id": session_id})
@@ -270,7 +272,7 @@ class ChatService:
     # Session management ------------------------------------
     def update_session_title(self, session_id: str, title: str) -> None:
         """Update the title of a chat session."""
-        if not self._sessions:
+        if self._sessions is None:
             self._fallback.update_session_title(session_id, title)
         else:
             self._sessions.update_one(
@@ -281,18 +283,18 @@ class ChatService:
     # Session deletion and listing ------------------------------------
     def delete_session(self, session_id: str) -> None:
         """Delete a session and all its associated messages."""
-        if not self._sessions:
+        if self._sessions is None:
             self._fallback.delete_session(session_id)
         else:
             # Delete session document
             self._sessions.delete_one({"_id": session_id})
             # Delete all associated messages
-            if self._messages:
+            if self._messages is not None:
                 self._messages.delete_many({"session_id": session_id})
 
     def list_user_sessions(self, user_id: str) -> List[Dict[str, Any]]:
         """List all sessions for a specific user."""
-        if not self._sessions:
+        if self._sessions is None:
             return self._fallback.list_user_sessions(user_id)
         
         cursor = self._sessions.find({"user_id": user_id}).sort("updated_at", -1)
@@ -300,7 +302,7 @@ class ChatService:
         for doc in cursor:
             # Count messages for this session
             message_count = 0
-            if self._messages:
+            if self._messages is not None:
                 message_count = self._messages.count_documents({"session_id": doc.get("_id")})
             
             sessions.append({

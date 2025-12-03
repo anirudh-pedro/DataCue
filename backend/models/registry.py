@@ -22,7 +22,9 @@ class ModelRegistry:
         if config.has_mongo:
             try:
                 self._client = MongoClient(config.mongo_uri, serverSelectionTimeoutMS=2_000)
-                db = self._client.get_default_database() or self._client["datacue"]
+                db = self._client.get_default_database()
+                if db is None:
+                    db = self._client["datacue"]
                 self._collection = db["model_registry"]
                 self._collection.create_index([("model_id", ASCENDING)], unique=True)
             except PyMongoError:
