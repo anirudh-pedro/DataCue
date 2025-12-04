@@ -33,7 +33,9 @@ class DatasetService:
                 # Create indexes for efficient querying
                 self._collection.create_index([("session_id", 1), ("dataset_id", 1)])
                 self._collection.create_index([("dataset_id", 1)])
-                self._datasets_meta.create_index([("session_id", 1)], unique=True)
+                self._datasets_meta.create_index([("session_id", 1)])
+                self._datasets_meta.create_index([("session_id", 1), ("dataset_id", 1)])
+                self._datasets_meta.create_index([("session_id", 1), ("created_at", -1)])
                 
                 LOGGER.info("DatasetService initialized with MongoDB")
             except Exception as exc:
@@ -94,31 +96,32 @@ class DatasetService:
             documents.append(doc)
         
         try:
-            # Clear any existing data for this session/dataset
+            # Clear any existing data previously associated with this session
             self._collection.delete_many({
-                "session_id": session_id,
-                "dataset_id": dataset_id
+                "session_id": session_id
             })
+            self._datasets_meta.delete_many({"session_id": session_id})
             
             # Insert new documents
             if documents:
                 self._collection.insert_many(documents)
             
             # Store metadata
+            from datetime import datetime, timezone
+            
             meta_doc = {
                 "session_id": session_id,
                 "dataset_id": dataset_id,
                 "dataset_name": dataset_name,
                 "row_count": len(documents),
                 "column_map": column_map,  # original -> sanitized mapping
+                "columns": list(column_map.values()),  # sanitized column names
+                "column_types": {col: str(dataframe[orig_col].dtype) for orig_col, col in column_map.items()},
                 "metadata": metadata or {},
+                "created_at": datetime.now(timezone.utc),
             }
             
-            self._datasets_meta.replace_one(
-                {"session_id": session_id},
-                meta_doc,
-                upsert=True
-            )
+            self._datasets_meta.insert_one(meta_doc)
             
             LOGGER.info(
                 "Stored %d rows for session=%s dataset=%s",
@@ -136,28 +139,46 @@ class DatasetService:
             LOGGER.exception("Failed to store dataset rows: %s", exc)
             return {"success": False, "error": str(exc)}
 
-    def get_session_dataset(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """Retrieve dataset metadata for a session."""
+    def get_session_dataset(self, session_id: str, dataset_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Retrieve dataset metadata for a session.
+
+        Args:
+            session_id: Chat/session identifier used when storing the dataset.
+            dataset_id: Optional explicit dataset identifier to look up.
+        """
         if not self.is_enabled:
             return None
         
         try:
-            doc = self._datasets_meta.find_one({"session_id": session_id})
+            query: Dict[str, Any] = {"session_id": session_id}
+            if dataset_id:
+                query["dataset_id"] = dataset_id
+
+            doc = self._datasets_meta.find_one(
+                query,
+                sort=[("created_at", -1)]  # Sort by creation time descending
+            )
             if doc:
                 doc.pop("_id", None)
+                LOGGER.info(f"Found dataset for session {session_id}: {doc.get('dataset_id')}")
+            else:
+                LOGGER.warning(f"No dataset found for session: {session_id}")
             return doc
         except Exception as exc:
             LOGGER.error("Failed to fetch dataset metadata: %s", exc)
             return None
 
-    def get_sample_rows(self, *, dataset_id: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def get_sample_rows(self, *, dataset_id: str, session_id: Optional[str] = None, limit: int = 5) -> List[Dict[str, Any]]:
         """Get sample rows from a dataset."""
         if not self.is_enabled:
             return []
         
         try:
+            query: Dict[str, Any] = {"dataset_id": dataset_id}
+            if session_id:
+                query["session_id"] = session_id
             cursor = self._collection.find(
-                {"dataset_id": dataset_id},
+                query,
                 {"_id": 0}
             ).limit(limit)
             
@@ -166,13 +187,14 @@ class DatasetService:
             LOGGER.error("Failed to fetch sample rows: %s", exc)
             return []
 
-    def run_pipeline(self, pipeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Execute a MongoDB aggregation pipeline."""
+    def run_pipeline(self, session_id: str, dataset_id: str, pipeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Execute a MongoDB aggregation pipeline scoped to a session/dataset."""
         if not self.is_enabled:
             raise RuntimeError("MongoDB not configured")
         
         try:
-            cursor = self._collection.aggregate(pipeline)
+            secured_pipeline = self._ensure_security_filters(pipeline, session_id=session_id, dataset_id=dataset_id)
+            cursor = self._collection.aggregate(secured_pipeline)
             results = list(cursor)
             
             # Remove MongoDB _id fields
@@ -226,6 +248,28 @@ class DatasetService:
         if isinstance(value, (list, dict)):
             return value
         return value
+
+    @staticmethod
+    def _ensure_security_filters(
+        pipeline: List[Dict[str, Any]],
+        *,
+        session_id: str,
+        dataset_id: str,
+    ) -> List[Dict[str, Any]]:
+        """Prepend mandatory match stage to keep queries session-scoped."""
+        if not isinstance(pipeline, list):
+            raise ValueError("Pipeline must be provided as a list of stages")
+
+        guard = {"session_id": session_id, "dataset_id": dataset_id}
+        security_stage = {"$match": guard}
+
+        if pipeline and isinstance(pipeline[0], dict) and "$match" in pipeline[0]:
+            return [
+                {"$match": {"$and": [guard, pipeline[0]["$match"]]}},
+                *pipeline[1:],
+            ]
+
+        return [security_stage, *pipeline]
 
 
 _DATASET_SERVICE: Optional[DatasetService] = None

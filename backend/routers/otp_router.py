@@ -43,8 +43,7 @@ async def send_otp(request: OTPRequest):
         "attempts": 0
     }
     
-    # TODO: Integrate with actual email service (SendGrid, AWS SES, etc.)
-    # For now, return OTP in response (ONLY for development)
+    # For development only - integrate email service in production
     return {
         "message": "OTP sent successfully",
         "email": request.email,

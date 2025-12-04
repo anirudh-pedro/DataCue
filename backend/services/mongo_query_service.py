@@ -98,7 +98,11 @@ class MongoQueryService:
 
         try:
             # Execute the pipeline
-            results = self._dataset_service.run_pipeline(safe_pipeline)
+            results = self._dataset_service.run_pipeline(
+                session_id=session_id,
+                dataset_id=dataset["dataset_id"],
+                pipeline=safe_pipeline,
+            )
             
         except Exception as exc:
             LOGGER.exception("Pipeline execution failed for session %s: %s", session_id, exc)
@@ -199,6 +203,7 @@ class MongoQueryService:
         # Get sample rows for context
         sample_rows = self._dataset_service.get_sample_rows(
             dataset_id=dataset["dataset_id"],
+            session_id=session_id,
             limit=5
         )
         

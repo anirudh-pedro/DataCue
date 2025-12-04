@@ -156,7 +156,7 @@ class KnowledgeService:
             if chart:
                 text_result["chart"] = chart
         except Exception:
-            # Chart generation is best-effort; fall back to text only.
+            # Chart generation is best-effort; fall back to text only
             pass
 
         return text_result

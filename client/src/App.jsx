@@ -1,6 +1,7 @@
 ﻿import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import ChatPage from './pages/ChatPage';
 import Dashboard from './pages/Dashboard';
+import ModularDashboard from './pages/ModularDashboard';
 import Login from './pages/Login';
 import Profile from './pages/Profile';
 import VerifyOtp from './pages/VerifyOtp';
@@ -15,6 +16,7 @@ function App() {
           <Route path="/verify-otp" element={<VerifyOtp />} />
           <Route path="/chat" element={<ChatPage />} />
           <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/modular-dashboard" element={<ModularDashboard />} />
           <Route path="/profile" element={<Profile />} />
         </Routes>
       </div>

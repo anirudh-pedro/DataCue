@@ -3,13 +3,15 @@
 from typing import Any, Dict, Optional
 import uuid
 
+import pandas as pd
+
 from agents.file_ingestion_agent.ingestion_agent import FileIngestionAgent
 from shared.storage import save_dataset, dataset_path
 from shared.utils import slugify
 from core.gridfs_service import get_gridfs_service
 from services.dataset_service import get_dataset_service
 
-#checking email
+
 class IngestionService:
     def __init__(self) -> None:
         self._agent = FileIngestionAgent()
@@ -63,8 +65,16 @@ class IngestionService:
         result["dataset_name"] = dataset_name
         result["gridfs_id"] = gridfs_id
         
+        # Build dataframe for MongoDB storage if available
+        dataframe = result.get("dataframe")
+        if dataframe is None and isinstance(result.get("data"), list) and result["data"]:
+            try:
+                dataframe = pd.DataFrame(result["data"])
+            except Exception:  # pragma: no cover - defensive conversion safeguard
+                dataframe = None
+
         # Store dataset rows in MongoDB for Groq querying
-        if self._dataset_service.is_enabled and result.get("dataframe") is not None:
+        if self._dataset_service.is_enabled and dataframe is not None and not dataframe.empty:
             dataset_id = str(uuid.uuid4())
             effective_session_id = session_id or dataset_id  # Use provided session or generate one
             
@@ -72,11 +82,13 @@ class IngestionService:
                 session_id=effective_session_id,
                 dataset_id=dataset_id,
                 dataset_name=dataset_name,
-                dataframe=result["dataframe"],
+                dataframe=dataframe,
                 metadata=metadata
             )
             
             if store_result.get("success"):
+                result["dataset_id"] = dataset_id
+                result["session_id"] = effective_session_id
                 result["mongo_storage"] = {
                     "enabled": True,
                     "session_id": effective_session_id,
@@ -91,4 +103,8 @@ class IngestionService:
         else:
             result["mongo_storage"] = {"enabled": False}
         
+        # Ensure we surface identifiers when MongoDB storage is disabled
+        if session_id and not result.get("session_id"):
+            result["session_id"] = session_id
+
         return result

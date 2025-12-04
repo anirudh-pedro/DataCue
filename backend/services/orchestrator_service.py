@@ -56,6 +56,7 @@ class OrchestratorService:
             filename=filename,
             content=content,
             sheet_name=sheet_name,
+            session_id=session_id,
         )
 
         dataset_name = ingest_result.get("dataset_name")
@@ -77,6 +78,8 @@ class OrchestratorService:
             "status": "success",
             "dataset_name": dataset_name,
             "gridfs_id": gridfs_id,
+            "dataset_id": ingest_result.get("dataset_id"),
+            "session_id": ingest_result.get("session_id") or session_id,
             "steps": {
                 "ingestion": {
                     key: ingest_result.get(key)
@@ -94,6 +97,15 @@ class OrchestratorService:
                 },
             },
         }
+
+        # Surface dataset metadata for downstream consumers
+        ingestion_step = pipeline["steps"]["ingestion"]
+        if ingest_result.get("dataset_id"):
+            ingestion_step["dataset_id"] = ingest_result["dataset_id"]
+        if ingest_result.get("session_id"):
+            ingestion_step["session_id"] = ingest_result["session_id"]
+        if ingest_result.get("mongo_storage"):
+            ingestion_step["mongo_storage"] = ingest_result["mongo_storage"]
 
         # Dashboard generation
         emit("generating_summary")

@@ -202,28 +202,17 @@ class DashboardGenerator:
         """
         charts = []
         
-        # Debug logging
-        logger.info(f"Classification: {classification}")
-        logger.info(f"Measures: {classification['measures']}")
-        logger.info(f"Dimensions: {classification['dimensions']}")
-        logger.info(f"Numeric: {classification['numeric']}")
-        logger.info(f"Time dimensions: {classification['time_dimensions']}")
-        
         # 1. Overview Charts (KPIs for measures)
         measures_for_kpi = classification["measures"][:5]
-        logger.info(f"Creating KPIs for: {measures_for_kpi}")
         for measure in measures_for_kpi:  # Limit to first 5 measures
             chart = self._create_kpi_card(data, measure, metadata)
             if chart:
                 charts.append(chart)
-                logger.info(f"Created KPI for {measure}")
         
         # 2. Distribution Charts (Histograms for numeric)
         numeric_for_hist = classification["numeric"][:4]
-        logger.info(f"Creating histograms for: {numeric_for_hist}")
         for numeric_col in numeric_for_hist:
             col_meta = self._get_column_metadata(metadata, numeric_col)
-            logger.info(f"Column {numeric_col} metadata: chart_recs={col_meta.get('chart_recommendations', []) if col_meta else 'NO META'}")
             if col_meta and 'histogram' in col_meta.get('chart_recommendations', []):
                 chart = self.chart_factory.create_histogram(
                     data, numeric_col, col_meta

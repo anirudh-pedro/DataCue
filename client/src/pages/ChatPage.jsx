@@ -545,11 +545,17 @@ const ChatPage = () => {
 
       const datasetName = pipelineResult?.dataset_name || file.name;
       const gridfsId = pipelineResult?.gridfs_id;
+      const datasetId = pipelineResult?.steps?.ingestion?.dataset_id || pipelineResult?.dataset_id;
       
       // Store GridFS ID for persistence
       if (gridfsId) {
         localStorage.setItem('datasetGridfsId', gridfsId);
         localStorage.setItem('datasetName', datasetName);
+      }
+      
+      // Store dataset ID if available
+      if (datasetId) {
+        localStorage.setItem('datasetId', datasetId);
       }
       
       setUploadStatusMessage(STAGE_LABELS.pipeline_complete);
@@ -595,6 +601,7 @@ const ChatPage = () => {
           content: `✅ Analysis complete! I generated ${dashboardData.charts.length} visualizations for "${datasetName}".\n\n🎨 Your dashboard is ready with:\n• ${dashboardData.charts.filter(c => c.type === 'histogram').length} Distribution Charts\n• ${dashboardData.charts.filter(c => c.type === 'bar').length} Bar Charts\n• ${dashboardData.charts.filter(c => c.type === 'scatter').length} Scatter Plots\n• ${dashboardData.charts.filter(c => c.type === 'heatmap').length} Correlation Heatmap\n• ${dashboardData.charts.filter(c => c.type === 'sankey').length} Flow Diagram\n\nClick "View Dashboard" below to explore all visualizations, or ask me questions about the data!`,
           timestamp: buildTimestamp(),
           showDashboardButton: true,
+          metadata: { datasetId: datasetId },
         });
       } else {
         // Fallback to chat message if no charts generated
@@ -806,15 +813,29 @@ const ChatPage = () => {
                           {msg.content}
                         </div>
                         
-                        {/* Dashboard Button */}
+                        {/* Dashboard Buttons */}
                         {msg.showDashboardButton && (
-                          <button
-                            onClick={handleViewDashboard}
-                            className="mt-3 px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white rounded-lg font-medium transition-all flex items-center gap-2"
-                          >
-                            <HiSparkles className="text-lg" />
-                            View Dashboard
-                          </button>
+                          <div className="mt-3 flex items-center gap-3">
+                            <button
+                              onClick={handleViewDashboard}
+                              className="px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white rounded-lg font-medium transition-all flex items-center gap-2"
+                            >
+                              <HiSparkles className="text-lg" />
+                              View Dashboard
+                            </button>
+                            <button
+                              onClick={() => navigate('/modular-dashboard', { 
+                                state: { 
+                                  sessionId: sessionId,
+                                  datasetId: msg.metadata?.datasetId 
+                                } 
+                              })}
+                              className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-700 hover:to-cyan-700 text-white rounded-lg font-medium transition-all flex items-center gap-2"
+                            >
+                              <HiSparkles className="text-lg" />
+                              Smart Dashboard
+                            </button>
+                          </div>
                         )}
                       </div>
                       
