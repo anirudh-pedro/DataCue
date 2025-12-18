@@ -8,8 +8,7 @@ import { FiSend, FiUpload, FiUser } from 'react-icons/fi';
 import { HiSparkles } from 'react-icons/hi2';
 import { auth } from '../firebase';
 import sessionManager from '../utils/sessionManager';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
+import { apiGet, apiPost, apiPatch, apiPostForm, API_BASE_URL } from '../lib/api';
 const STAGE_LABELS = {
   upload_received: '📁 Upload received. Preparing analysis…',
   reading_csv: '🔍 Reading CSV and validating columns…',
@@ -60,18 +59,14 @@ const ChatPage = () => {
 
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
-        const response = await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${sessionId}/messages`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: message.id,
-            role: message.role,
-            content: message.content,
-            timestamp: message.timestamp,
-            chart: message.chart,
-            metadata: message.metadata,
-            showDashboardButton: Boolean(message.showDashboardButton),
-          }),
+        const response = await apiPost(`/chat/sessions/${sessionId}/messages`, {
+          id: message.id,
+          role: message.role,
+          content: message.content,
+          timestamp: message.timestamp,
+          chart: message.chart,
+          metadata: message.metadata,
+          showDashboardButton: Boolean(message.showDashboardButton),
         });
         
         if (response.ok) {
@@ -124,7 +119,7 @@ const ChatPage = () => {
   useEffect(() => {
     const checkHealth = async () => {
       try {
-        const response = await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/health`);
+        const response = await apiGet('/health', { auth: false }); // Health check doesn't need auth
         if (!response.ok) {
           setHealthWarning('⚠️ Backend service is experiencing issues');
           return;
@@ -152,7 +147,7 @@ const ChatPage = () => {
   useEffect(() => {
     const loadHistory = async (activeSessionId) => {
       try {
-        const response = await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${activeSessionId}/messages`);
+        const response = await apiGet(`/chat/sessions/${activeSessionId}/messages`);
         if (!response.ok) {
           throw new Error('Failed to load chat history.');
         }
@@ -189,14 +184,10 @@ const ChatPage = () => {
     };
 
     const createNewSession = async (user) => {
-      const response = await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: user.uid,
-          email: user.email,
-          display_name: user.displayName,
-        }),
+      const response = await apiPost('/chat/sessions', {
+        user_id: user.uid,
+        email: user.email,
+        display_name: user.displayName,
       });
 
       if (!response.ok) {
@@ -327,11 +318,7 @@ const ChatPage = () => {
     if (!sessionId) return;
     
     try {
-      await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${sessionId}/title`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title }),
-      });
+      await apiPatch(`/chat/sessions/${sessionId}/title`, { title });
     } catch (error) {
       console.error('Failed to update session title:', error);
     }
@@ -364,16 +351,10 @@ const ChatPage = () => {
     setIsTyping(true);
     try {
       // Use ask-visual endpoint to get both text and optional chart
-      const response = await fetch(`${API_BASE_URL}/knowledge/ask-visual`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          question: userContent,
-          request_chart: true,
-          session_id: sessionId,
-        }),
+      const response = await apiPost('/knowledge/ask-visual', {
+        question: userContent,
+        request_chart: true,
+        session_id: sessionId,
       });
 
       if (!response.ok) {
@@ -450,7 +431,7 @@ const ChatPage = () => {
     
     try {
       // Fetch dashboard data from MongoDB (canonical source)
-      const response = await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${sessionId}/dashboard`);
+      const response = await apiGet(`/chat/sessions/${sessionId}/dashboard`);
       if (!response.ok) {
         console.error('No dashboard data found for this session');
         return;
@@ -490,10 +471,7 @@ const ChatPage = () => {
         formData.append('chat_session_id', sessionId);
       }
 
-      const sessionResponse = await fetch(`${API_BASE_URL}/orchestrator/pipeline/session`, {
-        method: 'POST',
-        body: formData,
-      });
+      const sessionResponse = await apiPostForm('/orchestrator/pipeline/session', formData);
 
       if (!sessionResponse.ok) {
         const errorText = await sessionResponse.text();
@@ -572,19 +550,15 @@ const ChatPage = () => {
       if (dashboardData && dashboardData.charts && dashboardData.charts.length > 0) {
         // Store in MongoDB via backend API
         try {
-          await fetch(`${API_BASE_URL.replace(/\/+$/, '')}/chat/sessions/${sessionId}/dashboard`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              charts: dashboardData.charts,
-              dataset_name: datasetName,
-              gridfs_id: gridfsId,
-              summary: dashboardData.summary,
-              quality_indicators: dashboardData.quality_indicators,
-              metadata_summary: dashboardData.metadata_summary,
-              layout: dashboardData.layout,
-              filters: dashboardData.filters,
-            }),
+          await apiPost(`/chat/sessions/${sessionId}/dashboard`, {
+            charts: dashboardData.charts,
+            dataset_name: datasetName,
+            gridfs_id: gridfsId,
+            summary: dashboardData.summary,
+            quality_indicators: dashboardData.quality_indicators,
+            metadata_summary: dashboardData.metadata_summary,
+            layout: dashboardData.layout,
+            filters: dashboardData.filters,
           });
         } catch (error) {
           console.error('Failed to store dashboard data:', error);

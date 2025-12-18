@@ -108,10 +108,6 @@ const VerifyOtp = () => {
       // Create a new 4-day session
       sessionManager.createSession(email);
       
-      // Show session info
-      const sessionInfo = sessionManager.getSessionInfo();
-      console.log('Session created, expires:', sessionInfo.expires);
-      
       navigate('/chat', { replace: true });
     } catch (error) {
       console.error('OTP verification failed:', error);

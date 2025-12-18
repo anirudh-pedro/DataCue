@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 
+from core.auth import FirebaseUser, get_current_user
+from core.config import get_settings
 from services.chat_service import ChatService, get_chat_service
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -60,15 +62,37 @@ def _serialise_message(message: Dict[str, Any]) -> Dict[str, Any]:
     return serialised
 
 
+def _validate_session_ownership(
+    session: Dict[str, Any],
+    user: FirebaseUser,
+) -> None:
+    """Validate that the session belongs to the authenticated user."""
+    settings = get_settings()
+    # Skip ownership check in dev mode
+    if settings.disable_firebase_auth:
+        return
+    if session.get("user_id") != user.uid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this session"
+        )
+
+
 @router.post("/sessions", response_model=CreateSessionResponse)
 def create_session(
     payload: CreateSessionRequest,
+    current_user: FirebaseUser = Depends(get_current_user),
     service: ChatService = Depends(get_chat_service),
 ) -> CreateSessionResponse:
+    settings = get_settings()
+    # In dev mode, use the payload's user_id; in production, use authenticated user's ID
+    user_id = payload.user_id if settings.disable_firebase_auth else current_user.uid
+    email = payload.email if settings.disable_firebase_auth else current_user.email
+    
     session = service.create_session(
-        user_id=payload.user_id,
-        email=str(payload.email) if payload.email else None,
-        display_name=payload.display_name,
+        user_id=user_id,
+        email=email,
+        display_name=current_user.name or payload.display_name,
     )
     return CreateSessionResponse(session_id=session["id"])
 
@@ -76,11 +100,14 @@ def create_session(
 @router.get("/sessions/{session_id}/messages", response_model=ChatMessagesResponse)
 def get_messages(
     session_id: str,
+    current_user: FirebaseUser = Depends(get_current_user),
     service: ChatService = Depends(get_chat_service),
 ) -> ChatMessagesResponse:
     session = service.get_session(session_id)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat session not found")
+    
+    _validate_session_ownership(session, current_user)
 
     messages = [
         _serialise_message(message)
@@ -93,15 +120,18 @@ def get_messages(
 def append_message(
     session_id: str,
     payload: ChatMessagePayload,
+    current_user: FirebaseUser = Depends(get_current_user),
     service: ChatService = Depends(get_chat_service),
 ) -> Dict[str, Any]:
     session = service.get_session(session_id)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat session not found")
+    
+    _validate_session_ownership(session, current_user)
 
     message = service.append_message(
         session_id=session_id,
-        user_id=session["user_id"],
+        user_id=current_user.uid,
         payload=payload.dict(),
     )
     return _serialise_message(message)
@@ -111,12 +141,15 @@ def append_message(
 def store_dashboard(
     session_id: str,
     payload: DashboardDataPayload,
+    current_user: FirebaseUser = Depends(get_current_user),
     service: ChatService = Depends(get_chat_service),
 ) -> Dict[str, str]:
     """Store dashboard data for a session (canonical source)."""
     session = service.get_session(session_id)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat session not found")
+    
+    _validate_session_ownership(session, current_user)
     
     service.store_dashboard_data(session_id, payload.dict())
     return {"status": "stored", "session_id": session_id}
@@ -125,12 +158,15 @@ def store_dashboard(
 @router.get("/sessions/{session_id}/dashboard")
 def get_dashboard(
     session_id: str,
+    current_user: FirebaseUser = Depends(get_current_user),
     service: ChatService = Depends(get_chat_service),
 ) -> Dict[str, Any]:
     """Retrieve dashboard data for a session from MongoDB."""
     session = service.get_session(session_id)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat session not found")
+    
+    _validate_session_ownership(session, current_user)
     
     dashboard_data = service.get_dashboard_data(session_id)
     if not dashboard_data:
@@ -143,12 +179,15 @@ def get_dashboard(
 def update_session_title(
     session_id: str,
     payload: UpdateTitleRequest,
+    current_user: FirebaseUser = Depends(get_current_user),
     service: ChatService = Depends(get_chat_service),
 ) -> Dict[str, Any]:
     """Update the title of a chat session."""
     session = service.get_session(session_id)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat session not found")
+    
+    _validate_session_ownership(session, current_user)
     
     service.update_session_title(session_id, payload.title)
     return {"session_id": session_id, "title": payload.title}
@@ -157,12 +196,15 @@ def update_session_title(
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_session(
     session_id: str,
+    current_user: FirebaseUser = Depends(get_current_user),
     service: ChatService = Depends(get_chat_service),
 ):
     """Delete a chat session and all its messages."""
     session = service.get_session(session_id)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat session not found")
+    
+    _validate_session_ownership(session, current_user)
     
     service.delete_session(session_id)
     return None
@@ -171,8 +213,17 @@ async def delete_session(
 @router.get("/sessions/user/{user_id}")
 def list_user_sessions(
     user_id: str,
+    current_user: FirebaseUser = Depends(get_current_user),
     service: ChatService = Depends(get_chat_service),
 ) -> Dict[str, Any]:
     """List all chat sessions for a specific user."""
+    settings = get_settings()
+    # Skip ownership check in dev mode
+    if not settings.disable_firebase_auth and user_id != current_user.uid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access your own sessions"
+        )
+    
     sessions = service.list_user_sessions(user_id)
     return {"user_id": user_id, "sessions": sessions}

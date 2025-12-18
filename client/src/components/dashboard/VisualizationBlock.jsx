@@ -90,12 +90,13 @@ const ChartDisplay = ({ data }) => {
   }
 
   return (
-    <div className="w-full h-full min-h-[300px] p-4">
+    <div className="w-full h-[350px] p-4">
       <Plot
         data={data.figure.data}
         layout={{
           ...data.figure.layout,
           autosize: true,
+          height: 300,
           margin: { t: 40, r: 20, b: 60, l: 60 },
           paper_bgcolor: 'transparent',
           plot_bgcolor: 'transparent',

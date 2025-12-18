@@ -2,15 +2,24 @@ import { initializeApp } from 'firebase/app';
 import { getAnalytics, isSupported } from 'firebase/analytics';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 
+// Firebase configuration from environment variables
 const firebaseConfig = {
-  apiKey: 'AIzaSyAk-Y-Vj9XfS1j8a5cyGs1Lru2CFMqrEJw',
-  authDomain: 'datacue-50971.firebaseapp.com',
-  projectId: 'datacue-50971',
-  storageBucket: 'datacue-50971.firebasestorage.app',
-  messagingSenderId: '803362972375',
-  appId: '1:803362972375:web:8629cd724acbeb6c134692',
-  measurementId: 'G-1012CWYZQH',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
+
+// Validate required config
+const requiredEnvVars = ['VITE_FIREBASE_API_KEY', 'VITE_FIREBASE_AUTH_DOMAIN', 'VITE_FIREBASE_PROJECT_ID'];
+for (const envVar of requiredEnvVars) {
+  if (!import.meta.env[envVar]) {
+    console.error(`Missing required environment variable: ${envVar}`);
+  }
+}
 
 const firebaseApp = initializeApp(firebaseConfig);
 

@@ -28,8 +28,6 @@ class SessionManager {
     localStorage.setItem(this.STORAGE_KEYS.OTP_EMAIL, email);
     localStorage.setItem(this.STORAGE_KEYS.SESSION_TIMESTAMP, now.toString());
     localStorage.setItem(this.STORAGE_KEYS.SESSION_EXPIRY, expiryTime.toString());
-
-    console.log(`Session created for ${email}, expires in ${SESSION_DURATION_DAYS} days`);
   }
 
   /**
@@ -54,7 +52,6 @@ class SessionManager {
     const expiry = parseInt(expiryTime, 10);
 
     if (now >= expiry) {
-      console.log('Session expired');
       this.clearSession();
       return false;
     }
@@ -109,7 +106,6 @@ class SessionManager {
     const newExpiry = now + SESSION_DURATION_MS;
 
     localStorage.setItem(this.STORAGE_KEYS.SESSION_EXPIRY, newExpiry.toString());
-    console.log('Session extended by 4 days');
     return true;
   }
 
@@ -125,8 +121,6 @@ class SessionManager {
     // Also clear old sessionStorage if it exists
     sessionStorage.removeItem('otpVerified');
     sessionStorage.removeItem('otpEmail');
-    
-    console.log('Session cleared');
   }
 
   /**
@@ -137,7 +131,6 @@ class SessionManager {
     const oldEmail = sessionStorage.getItem('otpEmail');
 
     if (oldOtpVerified === 'true' && oldEmail) {
-      console.log('Migrating old session to new system');
       this.createSession(oldEmail);
       sessionStorage.removeItem('otpVerified');
       sessionStorage.removeItem('otpEmail');

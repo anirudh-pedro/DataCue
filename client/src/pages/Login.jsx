@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 import sessionManager from '../utils/sessionManager';
+import { setOtpFlowInProgress } from '../context/AuthContext';
 
 const Login = () => {
   const navigate = useNavigate();
@@ -54,15 +55,23 @@ const Login = () => {
   }, [navigate]);
 
   const sendOtp = async (email) => {
-  const response = await fetch(`${emailServiceUrl.replace(/\/$/, '')}/send-otp`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email }),
-    });
+    try {
+      const url = `${emailServiceUrl.replace(/\/$/, '')}/send-otp`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
 
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
-      throw new Error(payload.message || 'Failed to send OTP');
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.message || `Failed to send OTP (${response.status})`);
+      }
+    } catch (error) {
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        throw new Error('Email service is not running. Please start it on port 4000.');
+      }
+      throw error;
     }
   };
 
@@ -73,7 +82,7 @@ const Login = () => {
       navigate('/verify-otp', { replace: true, state: { email } });
     } catch (error) {
       console.error('OTP send failed:', error);
-      setErrorMessage('Could not send OTP email. Please try again.');
+      setErrorMessage(`Could not send OTP email: ${error.message}`);
     }
   };
 
@@ -81,6 +90,7 @@ const Login = () => {
     setErrorMessage('');
     setIsSigningIn(true);
     signInInProgressRef.current = true;
+    setOtpFlowInProgress(true); // Prevent AuthContext from signing out during OTP flow
 
     try {
       const result = await signInWithPopup(auth, new GoogleAuthProvider());
@@ -88,6 +98,7 @@ const Login = () => {
         await proceedToOtp(result.user.email);
       }
     } catch (error) {
+      setOtpFlowInProgress(false); // Reset on error
       const code = error?.code || 'auth/error';
       if (code !== 'auth/popup-closed-by-user' && code !== 'auth/cancelled-popup-request') {
         setErrorMessage('Unable to sign in with Google. Please try again.');

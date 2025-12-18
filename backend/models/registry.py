@@ -85,9 +85,15 @@ class ModelRegistry:
 
     def close(self) -> None:
         if self._client is not None:
-            self._client.close()
+            try:
+                self._client.close()
+            except Exception:
+                pass  # Ignore errors during shutdown
             self._client = None
             self._collection = None
 
     def __del__(self) -> None:  # pragma: no cover - best effort cleanup
-        self.close()
+        try:
+            self.close()
+        except Exception:
+            pass  # Ignore errors during Python shutdown

@@ -58,6 +58,10 @@ class Settings:
     default_page_size: int
     max_page_size: int
     cache_ttl_seconds: int
+    
+    # Firebase Authentication
+    disable_firebase_auth: bool
+    firebase_project_id: Optional[str]
 
     def __init__(self) -> None:
         # API Keys
@@ -100,6 +104,10 @@ class Settings:
         self.default_page_size = int(os.getenv("DEFAULT_PAGE_SIZE", "20"))
         self.max_page_size = int(os.getenv("MAX_PAGE_SIZE", "100"))
         self.cache_ttl_seconds = int(os.getenv("CACHE_TTL_SECONDS", "3600"))
+        
+        # Firebase Authentication
+        self.disable_firebase_auth = os.getenv("DISABLE_FIREBASE_AUTH", "false").lower() == "true"
+        self.firebase_project_id = os.getenv("FIREBASE_PROJECT_ID", "datacue-50971")
 
     @property
     def has_groq(self) -> bool:

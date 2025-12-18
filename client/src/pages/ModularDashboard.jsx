@@ -6,8 +6,7 @@ import sessionManager from '../utils/sessionManager';
 import DashboardGrid from '../components/dashboard/DashboardGrid';
 import { HiSparkles } from 'react-icons/hi2';
 import { FiArrowLeft, FiRefreshCw, FiUpload } from 'react-icons/fi';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
+import { apiPost } from '../lib/api';
 
 const ModularDashboard = () => {
   const navigate = useNavigate();
@@ -85,11 +84,7 @@ const ModularDashboard = () => {
         payload.dataset_id = datasetId;
       }
       
-      const suggestResponse = await fetch(`${API_BASE_URL}/dashboard/suggest-components`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      const suggestResponse = await apiPost('/dashboard/suggest-components', payload);
 
       if (!suggestResponse.ok) {
         const errorData = await suggestResponse.json().catch(() => ({}));
@@ -127,14 +122,10 @@ const ModularDashboard = () => {
       // Fetch data for all components in parallel
       const fetchPromises = componentsList.map(async (component) => {
         try {
-          const response = await fetch(`${API_BASE_URL}/dashboard/component-data`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              session_id: sessionId,
-              dataset_id: effectiveDatasetId,
-              component: component
-            })
+          const response = await apiPost('/dashboard/component-data', {
+            session_id: sessionId,
+            dataset_id: effectiveDatasetId,
+            component: component
           });
 
           if (response.ok) {
@@ -169,14 +160,10 @@ const ModularDashboard = () => {
     if (!component) return;
 
     try {
-      const response = await fetch(`${API_BASE_URL}/dashboard/component-data`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: sessionId,
-          dataset_id: datasetId,
-          component: component
-        })
+      const response = await apiPost('/dashboard/component-data', {
+        session_id: sessionId,
+        dataset_id: datasetId,
+        component: component
       });
 
       if (response.ok) {
