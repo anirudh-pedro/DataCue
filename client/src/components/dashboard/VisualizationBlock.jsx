@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { HiChartBar, HiChartPie, HiSparkles } from 'react-icons/hi2';
 import { FiRefreshCw, FiMaximize2, FiMinimize2, FiGrid } from 'react-icons/fi';
-import Plot from 'react-plotly.js';
+import Plot from '../Plot';
 
 const getBlockIcon = (type) => {
   const icons = {

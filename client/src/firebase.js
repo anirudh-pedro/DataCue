@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAnalytics, isSupported } from 'firebase/analytics';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { getAuth } from 'firebase/auth';
 
 // Firebase configuration from environment variables
 const firebaseConfig = {
@@ -30,8 +30,6 @@ const analyticsPromise = typeof window !== 'undefined'
   : Promise.resolve(null);
 
 const auth = getAuth(firebaseApp);
-const googleProvider = new GoogleAuthProvider();
-googleProvider.setCustomParameters({ prompt: 'select_account' });
 
-export { firebaseApp, analyticsPromise, auth, googleProvider };
+export { auth };
 
