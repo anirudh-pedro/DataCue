@@ -87,7 +87,6 @@ class KnowledgeAgent:
         self.profile_data = self.profiler.profile_dataset(data)
         
         # Step 2: Generate insights
-        insights_result = None
         if generate_insights:
             print("💡 Step 2/4: Generating insights...")
             self.insights = self.insight_generator.generate_insights(

@@ -6,7 +6,6 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-import httpx
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
