@@ -7,6 +7,7 @@ from routers import (
     chat_router,
     dashboard_router,
     ingestion_router,
+    orchestrator_router,
     otp_router,
 )
 from core.config import get_settings
@@ -34,6 +35,7 @@ app.add_middleware(
 app.include_router(ingestion_router.router)
 app.include_router(dashboard_router.router)
 app.include_router(chat_router.router)
+app.include_router(orchestrator_router.router)
 app.include_router(otp_router.router)
 
 

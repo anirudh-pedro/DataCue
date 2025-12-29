@@ -76,6 +76,8 @@ def generate_dashboard(
             user_prompt=payload.user_prompt
         )
         return clean_response(result)
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions as-is
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

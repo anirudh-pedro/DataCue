@@ -798,7 +798,7 @@ const ChatPage = () => {
                               View Dashboard
                             </button>
                             <button
-                              onClick={() => navigate('/modular-dashboard', { 
+                              onClick={() => navigate('/analytics', { 
                                 state: { 
                                   sessionId: sessionId,
                                   datasetId: msg.metadata?.datasetId 
@@ -807,7 +807,7 @@ const ChatPage = () => {
                               className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-700 hover:to-cyan-700 text-white rounded-lg font-medium transition-all flex items-center gap-2"
                             >
                               <HiSparkles className="text-lg" />
-                              Smart Dashboard
+                              Analytics View
                             </button>
                           </div>
                         )}

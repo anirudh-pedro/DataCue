@@ -230,12 +230,18 @@ class DatasetService:
             # Check if user_id is set and matches
             owner_id = doc.get("user_id")
             if owner_id is None:
-                # Legacy dataset without user_id - allow access
-                return {"authorized": True, "reason": "Legacy dataset (no owner)"}
+                # Legacy dataset without user_id - update with current user and allow
+                LOGGER.info(f"Updating legacy dataset {session_id} with user_id {user_id}")
+                self._datasets_meta.update_one(
+                    {"session_id": session_id},
+                    {"$set": {"user_id": user_id}}
+                )
+                return {"authorized": True, "reason": "Legacy dataset (ownership assigned)"}
             
             if owner_id == user_id:
                 return {"authorized": True, "reason": None}
             else:
+                LOGGER.warning(f"Ownership mismatch: dataset owned by {owner_id[:8]}... but accessed by {user_id[:8]}...")
                 return {"authorized": False, "reason": "User does not own this dataset"}
                 
         except Exception as exc:

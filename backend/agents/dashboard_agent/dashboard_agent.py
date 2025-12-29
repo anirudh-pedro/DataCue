@@ -61,19 +61,17 @@ class DashboardAgent:
                 "charts": []
             }
             
-            # Step 3: Process each chart and execute queries
+            # Step 3: Process each chart and build Plotly figures
             for chart in chart_ideas.get("charts", []):
-                chart_data = self._execute_chart_query(chart, data)
-                dashboard_config["charts"].append({
-                    "chart_id": f"chart_{uuid.uuid4().hex[:6]}",
-                    "chart_type": chart.get("chart_type", "bar"),
-                    "title": chart.get("title", "Chart"),
-                    "description": chart.get("description", ""),
-                    "x_axis": chart.get("x_axis"),
-                    "y_axis": chart.get("y_axis"),
-                    "aggregation": chart.get("aggregation", "sum"),
-                    "data": chart_data
-                })
+                figure = self._build_plotly_figure(chart, data)
+                if figure:
+                    dashboard_config["charts"].append({
+                        "id": f"chart_{uuid.uuid4().hex[:6]}",
+                        "type": chart.get("chart_type", "bar"),
+                        "title": chart.get("title", "Chart"),
+                        "description": chart.get("description", ""),
+                        "figure": figure
+                    })
             
             return {
                 "status": "success",
@@ -198,8 +196,8 @@ Rules:
             "insights": ["Dashboard generated with basic charts"]
         }
     
-    def _execute_chart_query(self, chart: Dict[str, Any], data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Execute safe query to get chart data"""
+    def _build_plotly_figure(self, chart: Dict[str, Any], data: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Build a Plotly-compatible figure object from chart config and data"""
         import pandas as pd
         
         df = pd.DataFrame(data)
@@ -208,50 +206,137 @@ Rules:
         y_axis = chart.get("y_axis")
         aggregation = chart.get("aggregation", "sum")
         
+        # Common layout for dark theme
+        base_layout = {
+            "margin": {"t": 40, "r": 20, "b": 80, "l": 50},
+            "paper_bgcolor": "transparent",
+            "plot_bgcolor": "transparent",
+            "font": {"color": "#e2e8f0"},
+            "xaxis": {"gridcolor": "rgba(100, 116, 139, 0.2)"},
+            "yaxis": {"gridcolor": "rgba(100, 116, 139, 0.2)"},
+        }
+        
         try:
             if chart_type == "histogram":
-                # Return raw values for histogram
-                if x_axis and x_axis in df.columns:
-                    return df[[x_axis]].dropna().to_dict(orient='records')
-                return []
+                if not x_axis or x_axis not in df.columns:
+                    return None
+                values = df[x_axis].dropna().tolist()
+                if not values:
+                    return None
+                return {
+                    "data": [{
+                        "type": "histogram",
+                        "x": values,
+                        "marker": {"color": "#06b6d4", "line": {"color": "#0e7490", "width": 1}},
+                    }],
+                    "layout": {**base_layout, "bargap": 0.05}
+                }
             
             if chart_type == "pie":
-                # Value counts for pie
-                if x_axis and x_axis in df.columns:
-                    counts = df[x_axis].value_counts().reset_index()
-                    counts.columns = [x_axis, 'count']
-                    return counts.head(10).to_dict(orient='records')
-                return []
+                if not x_axis or x_axis not in df.columns:
+                    return None
+                counts = df[x_axis].value_counts().head(10)
+                if counts.empty:
+                    return None
+                return {
+                    "data": [{
+                        "type": "pie",
+                        "labels": counts.index.tolist(),
+                        "values": counts.values.tolist(),
+                        "hole": 0.4,
+                        "marker": {"line": {"color": "#0f172a", "width": 2}},
+                        "textposition": "inside",
+                        "textinfo": "percent",
+                    }],
+                    "layout": {
+                        **base_layout,
+                        "showlegend": True,
+                        "legend": {"orientation": "h", "y": -0.1, "x": 0.5, "xanchor": "center"},
+                    }
+                }
             
             if chart_type == "scatter":
-                # Raw x,y pairs for scatter
-                if x_axis in df.columns and y_axis in df.columns:
-                    return df[[x_axis, y_axis]].dropna().to_dict(orient='records')
-                return []
+                if not x_axis or not y_axis or x_axis not in df.columns or y_axis not in df.columns:
+                    return None
+                scatter_df = df[[x_axis, y_axis]].dropna()
+                if scatter_df.empty:
+                    return None
+                return {
+                    "data": [{
+                        "type": "scatter",
+                        "mode": "markers",
+                        "x": scatter_df[x_axis].tolist(),
+                        "y": scatter_df[y_axis].tolist(),
+                        "marker": {"color": "#22c55e", "size": 8, "opacity": 0.7},
+                    }],
+                    "layout": base_layout
+                }
             
-            # Bar, line: group and aggregate
-            if x_axis and y_axis and x_axis in df.columns and y_axis in df.columns:
-                grouped = df.groupby(x_axis)[y_axis]
-                
+            if chart_type == "line":
+                if not x_axis or not y_axis or x_axis not in df.columns or y_axis not in df.columns:
+                    return None
+                # Try to sort by x if it looks like a date/time
+                line_df = df[[x_axis, y_axis]].dropna()
+                if line_df.empty:
+                    return None
+                # Group and aggregate
+                grouped = line_df.groupby(x_axis)[y_axis]
                 if aggregation == "sum":
                     result = grouped.sum()
                 elif aggregation == "avg":
                     result = grouped.mean()
                 elif aggregation == "count":
                     result = grouped.count()
-                elif aggregation == "min":
-                    result = grouped.min()
-                elif aggregation == "max":
-                    result = grouped.max()
                 else:
                     result = grouped.sum()
-                
-                result_df = result.reset_index()
-                result_df.columns = [x_axis, y_axis]
-                return result_df.to_dict(orient='records')
+                result = result.reset_index()
+                return {
+                    "data": [{
+                        "type": "scatter",
+                        "mode": "lines+markers",
+                        "x": result[x_axis].tolist(),
+                        "y": result[y_axis].tolist(),
+                        "line": {"color": "#8b5cf6", "width": 2},
+                        "marker": {"color": "#a855f7", "size": 6},
+                        "fill": "tozeroy",
+                        "fillcolor": "rgba(139, 92, 246, 0.1)",
+                    }],
+                    "layout": base_layout
+                }
             
-            return []
+            # Default: bar chart
+            if not x_axis or not y_axis or x_axis not in df.columns or y_axis not in df.columns:
+                return None
+            
+            # Group and aggregate
+            grouped = df.groupby(x_axis)[y_axis]
+            if aggregation == "sum":
+                result = grouped.sum()
+            elif aggregation == "avg":
+                result = grouped.mean()
+            elif aggregation == "count":
+                result = grouped.count()
+            elif aggregation == "min":
+                result = grouped.min()
+            elif aggregation == "max":
+                result = grouped.max()
+            else:
+                result = grouped.sum()
+            
+            result = result.reset_index()
+            if result.empty:
+                return None
+            
+            return {
+                "data": [{
+                    "type": "bar",
+                    "x": result[x_axis].tolist(),
+                    "y": result[y_axis].tolist(),
+                    "marker": {"color": "#6366f1", "line": {"color": "#818cf8", "width": 1}},
+                }],
+                "layout": {**base_layout, "bargap": 0.3}
+            }
             
         except Exception as e:
-            logger.warning(f"Chart query failed: {e}")
-            return []
+            logger.warning(f"Failed to build Plotly figure: {e}")
+            return None
