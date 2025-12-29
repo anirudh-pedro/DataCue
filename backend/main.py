@@ -1,4 +1,4 @@
-"""Unified FastAPI application orchestrating all DataCue agents."""
+"""DataCue API - Simplified AI Analytics Platform."""
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,12 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from routers import (
     chat_router,
     dashboard_router,
-    dashboard_designer_router,
     ingestion_router,
-    knowledge_router,
-    orchestrator_router,
     otp_router,
-    prediction_router,
 )
 from core.config import get_settings
 from shared.config import get_config
@@ -20,9 +16,9 @@ from shared.config import get_config
 settings = get_settings()
 
 app = FastAPI(
-    title="DataCue Orchestrator",
-    description="Single entry point exposing ingestion, dashboard, knowledge, and prediction services.",
-    version="2.0.0",
+    title="DataCue API",
+    description="AI-powered analytics platform with file ingestion, dashboard generation, and chat with data.",
+    version="3.0.0",
 )
 
 # Use centralized CORS configuration
@@ -34,12 +30,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Core routers only
 app.include_router(ingestion_router.router)
 app.include_router(dashboard_router.router)
-app.include_router(dashboard_designer_router.router)
-app.include_router(knowledge_router.router)
-app.include_router(prediction_router.router)
-app.include_router(orchestrator_router.router)
 app.include_router(chat_router.router)
 app.include_router(otp_router.router)
 
@@ -49,7 +42,8 @@ def root():
     config = get_config()
     return {
         "status": "ok",
-        "agents": ["ingestion", "dashboard", "dashboard-designer", "knowledge", "prediction"],
+        "version": "3.0.0",
+        "agents": ["ingestion", "dashboard", "chat"],
         "integrations": {
             "mongo": config.has_mongo,
             "groq": config.has_groq,

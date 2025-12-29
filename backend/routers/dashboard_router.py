@@ -1,149 +1,86 @@
-"""FastAPI router exposing dashboard generation endpoints."""
+"""FastAPI router for dashboard generation."""
 
 from typing import Any, Dict, List, Optional
-
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from core.auth import get_current_user, UserInfo
 from services.dashboard_service import DashboardService
-from services.dashboard_orchestration_service import get_orchestration_service
-from services.component_query_service import get_component_query_service
-from services.dataset_service import get_dataset_service
+from services.dataset_service import DatasetService
 from shared.utils import clean_response
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 service = DashboardService()
+dataset_service = DatasetService()
 
 
-class DashboardRequest(BaseModel):
-    data: List[Dict[str, Any]] = Field(default=None, description="Dataset records (optional if gridfs_id provided)")
-    gridfs_id: str = Field(default=None, description="GridFS file ID of the dataset (optional if data provided)")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="Metadata extracted from ingestion agent")
-    options: Optional[Dict[str, Any]] = Field(default=None, description="Dashboard generation options")
-
-
-class ComponentSuggestionRequest(BaseModel):
-    session_id: str = Field(..., description="Session ID for data isolation")
-    dataset_id: str = Field(default=None, description="Optional dataset ID, uses latest if not provided")
-    max_components: int = Field(default=6, description="Maximum number of components to suggest")
-
-
-class ComponentDataRequest(BaseModel):
-    session_id: str = Field(..., description="Session ID for data isolation")
-    dataset_id: str = Field(..., description="Dataset ID")
-    component: Dict[str, Any] = Field(..., description="Component configuration")
+class GenerateDashboardRequest(BaseModel):
+    """Request model for dashboard generation"""
+    data: Optional[List[Dict[str, Any]]] = Field(
+        default=None, 
+        description="Dataset records (optional if gridfs_id or session_id provided)"
+    )
+    gridfs_id: Optional[str] = Field(
+        default=None, 
+        description="GridFS file ID of the dataset"
+    )
+    session_id: Optional[str] = Field(
+        default=None,
+        description="Session ID for MongoDB data"
+    )
+    dataset_id: Optional[str] = Field(
+        default=None,
+        description="Dataset ID in MongoDB"
+    )
+    metadata: Optional[Dict[str, Any]] = Field(
+        default=None, 
+        description="Column metadata from ingestion"
+    )
+    user_prompt: Optional[str] = Field(
+        default=None,
+        description="Optional user guidance for dashboard generation"
+    )
 
 
 @router.post("/generate")
-def generate_dashboard(payload: DashboardRequest):
-    options = payload.options or {}
-    result = service.generate(
-        data=payload.data,
-        gridfs_id=payload.gridfs_id,
-        metadata=payload.metadata,
-        **options
-    )
-    return clean_response(result)
-
-
-@router.post("/suggest-components")
-def suggest_components(payload: ComponentSuggestionRequest):
+def generate_dashboard(
+    payload: GenerateDashboardRequest,
+    current_user: UserInfo = Depends(get_current_user)
+):
     """
-    Generate dashboard component suggestions based on dataset schema
-    Uses Groq LLM to analyze columns and suggest appropriate visualizations
+    Generate a dashboard from dataset
+    
+    The LLM analyzes the data schema and suggests appropriate charts.
+    Each chart is executed server-side and data is returned.
     """
     try:
-        orchestration_service = get_orchestration_service()
-        dataset_service = get_dataset_service()
+        # Verify user owns the dataset if session_id is provided
+        if payload.session_id:
+            ownership = dataset_service.verify_ownership(
+                session_id=payload.session_id,
+                user_id=current_user.uid,
+                dataset_id=payload.dataset_id
+            )
+            if not ownership["authorized"]:
+                raise HTTPException(
+                    status_code=403,
+                    detail=ownership.get("reason", "Access denied to this dataset")
+                )
         
-        # Get dataset metadata (dataset_id is optional, gets latest if not provided)
-        dataset_info = dataset_service.get_session_dataset(
-            payload.session_id,
-            payload.dataset_id
-        )
-        
-        if not dataset_info:
-            raise HTTPException(status_code=404, detail="Dataset not found for this session")
-        
-        # Use the dataset_id from the retrieved dataset info
-        actual_dataset_id = dataset_info.get("dataset_id")
-        
-        # Get sample data for better suggestions
-        sample_data = dataset_service.get_sample_rows(
-            dataset_id=actual_dataset_id,
-            session_id=payload.session_id,
-            limit=5
-        )
-        
-        # Generate suggestions
-        suggestions = orchestration_service.suggest_dashboard_components(
-            columns=dataset_info.get("columns", []),
-            column_types=dataset_info.get("column_types", {}),
-            sample_data=sample_data,
-            max_components=payload.max_components
-        )
-        
-        return {
-            "success": True,
-            "session_id": payload.session_id,
-            "dataset_id": actual_dataset_id,
-            "components": suggestions,
-            "total_components": len(suggestions)
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate suggestions: {str(e)}")
-
-
-@router.post("/component-data")
-def get_component_data(payload: ComponentDataRequest):
-    """
-    Generate and execute MongoDB query for a specific dashboard component
-    Returns data ready for visualization
-    """
-    try:
-        query_service = get_component_query_service()
-        dataset_service = get_dataset_service()
-        
-        # Get dataset metadata
-        dataset_info = dataset_service.get_session_dataset(
-            payload.session_id,
-            payload.dataset_id
-        )
-        
-        if not dataset_info:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-        
-        # Generate MongoDB query for this component
-        pipeline = query_service.generate_component_query(
-            component=payload.component,
-            columns=dataset_info.get("columns", []),
-            column_types=dataset_info.get("column_types", {}),
-            session_id=payload.session_id,
-            dataset_id=payload.dataset_id
-        )
-        
-        if not pipeline:
-            raise HTTPException(status_code=500, detail="Failed to generate query for component")
-        
-        # Execute query
-        result = dataset_service.run_pipeline(
+        result = service.generate(
+            data=payload.data,
+            gridfs_id=payload.gridfs_id,
             session_id=payload.session_id,
             dataset_id=payload.dataset_id,
-            pipeline=pipeline
+            metadata=payload.metadata,
+            user_prompt=payload.user_prompt
         )
-        
-        return {
-            "success": True,
-            "component_id": payload.component.get("id"),
-            "data": result,
-            "pipeline": pipeline,
-            "row_count": len(result) if isinstance(result, list) else 1
-        }
-        
-    except HTTPException:
-        raise
+        return clean_response(result)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch component data: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/health")
+def health():
+    """Health check for dashboard service"""
+    return {"status": "ok", "service": "dashboard"}

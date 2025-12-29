@@ -57,6 +57,7 @@ class DatasetService:
         dataset_name: str,
         dataframe: pd.DataFrame,
         metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Store cleaned dataset rows in MongoDB with sanitized column names."""
         if not self.is_enabled:
@@ -113,6 +114,7 @@ class DatasetService:
                 "session_id": session_id,
                 "dataset_id": dataset_id,
                 "dataset_name": dataset_name,
+                "user_id": user_id,  # Owner of this dataset (OTP authenticated)
                 "row_count": len(documents),
                 "column_map": column_map,  # original -> sanitized mapping
                 "columns": list(column_map.values()),  # sanitized column names
@@ -138,6 +140,47 @@ class DatasetService:
         except Exception as exc:
             LOGGER.exception("Failed to store dataset rows: %s", exc)
             return {"success": False, "error": str(exc)}
+
+    def verify_ownership(self, session_id: str, user_id: str, dataset_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Verify that a user owns a dataset.
+        
+        Args:
+            session_id: Session identifier
+            user_id: User ID to verify ownership against
+            dataset_id: Optional specific dataset ID
+            
+        Returns:
+            {"authorized": bool, "reason": str or None}
+        """
+        if not self.is_enabled:
+            # If MongoDB not enabled, allow access (local mode)
+            return {"authorized": True, "reason": "MongoDB not configured"}
+        
+        try:
+            query: Dict[str, Any] = {"session_id": session_id}
+            if dataset_id:
+                query["dataset_id"] = dataset_id
+            
+            doc = self._datasets_meta.find_one(query)
+            
+            if not doc:
+                return {"authorized": False, "reason": "Dataset not found"}
+            
+            # Check if user_id is set and matches
+            owner_id = doc.get("user_id")
+            if owner_id is None:
+                # Legacy dataset without user_id - allow access
+                return {"authorized": True, "reason": "Legacy dataset (no owner)"}
+            
+            if owner_id == user_id:
+                return {"authorized": True, "reason": None}
+            else:
+                return {"authorized": False, "reason": "User does not own this dataset"}
+                
+        except Exception as exc:
+            LOGGER.error("Failed to verify dataset ownership: %s", exc)
+            return {"authorized": False, "reason": f"Verification error: {str(exc)}"}
 
     def get_session_dataset(self, session_id: str, dataset_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Retrieve dataset metadata for a session.

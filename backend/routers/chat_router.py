@@ -11,8 +11,11 @@ from pydantic import BaseModel, EmailStr, Field
 from core.auth import FirebaseUser, get_current_user
 from core.config import get_settings
 from services.chat_service import ChatService, get_chat_service
+from services.chat_query_service import ChatQueryService, get_chat_query_service
+from services.dataset_service import DatasetService
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+dataset_service = DatasetService()
 
 
 class CreateSessionRequest(BaseModel):
@@ -52,6 +55,16 @@ class DashboardDataPayload(BaseModel):
     metadata_summary: Optional[Dict[str, Any]] = None
     layout: Optional[Dict[str, Any]] = None
     filters: Optional[Dict[str, Any]] = None
+
+
+class AskQuestionRequest(BaseModel):
+    """Request model for asking questions about data"""
+    question: str = Field(..., description="Natural language question about the data")
+    session_id: Optional[str] = Field(default=None, description="Session ID for MongoDB data")
+    dataset_id: Optional[str] = Field(default=None, description="Dataset ID")
+    gridfs_id: Optional[str] = Field(default=None, description="GridFS file ID")
+    data: Optional[List[Dict[str, Any]]] = Field(default=None, description="Direct data records")
+    metadata: Optional[Dict[str, Any]] = Field(default=None, description="Column metadata")
 
 
 def _serialise_message(message: Dict[str, Any]) -> Dict[str, Any]:
@@ -227,3 +240,51 @@ def list_user_sessions(
     
     sessions = service.list_user_sessions(user_id)
     return {"user_id": user_id, "sessions": sessions}
+
+
+# ============== CHAT WITH DATA ENDPOINT ==============
+
+@router.post("/ask")
+def ask_question(
+    payload: AskQuestionRequest,
+    current_user: FirebaseUser = Depends(get_current_user),
+    query_service: ChatQueryService = Depends(get_chat_query_service),
+) -> Dict[str, Any]:
+    """
+    Ask a natural language question about the dataset.
+    
+    The question is converted to a safe read-only query using LLM,
+    validated, and executed. Returns the result with optional insight.
+    
+    Example questions:
+    - "What is the average revenue by region?"
+    - "Show me the top 10 products by sales"
+    - "What's the trend of orders over time?"
+    """
+    try:
+        # Verify user owns the dataset if session_id is provided
+        if payload.session_id:
+            ownership = dataset_service.verify_ownership(
+                session_id=payload.session_id,
+                user_id=current_user.uid,
+                dataset_id=payload.dataset_id
+            )
+            if not ownership["authorized"]:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=ownership.get("reason", "Access denied to this dataset")
+                )
+        
+        result = query_service.ask(
+            question=payload.question,
+            session_id=payload.session_id,
+            dataset_id=payload.dataset_id,
+            gridfs_id=payload.gridfs_id,
+            data=payload.data,
+            metadata=payload.metadata
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
