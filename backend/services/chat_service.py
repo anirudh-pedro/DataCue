@@ -146,18 +146,10 @@ class ChatService:
                 self._sessions = db["chat_sessions"]
                 self._messages = db["chat_messages"]
                 
-                # Create indexes for performance
-                self._sessions.create_index([("user_id", ASCENDING)])
-                self._messages.create_index([("session_id", ASCENDING), ("created_at", ASCENDING)])
+                # Create indexes for performance (check before creating)
+                self._ensure_indexes()
                 
-                # Create TTL index to auto-expire sessions after 30 days of inactivity
-                # MongoDB will automatically delete documents where updated_at is older than 30 days
-                self._sessions.create_index(
-                    [("updated_at", ASCENDING)],
-                    expireAfterSeconds=2592000  # 30 days in seconds (30 * 24 * 60 * 60)
-                )
-                
-                _LOGGER.info("ChatService connected to MongoDB with TTL index on sessions")
+                _LOGGER.info("ChatService connected to MongoDB with indexes")
             except PyMongoError as exc:
                 _LOGGER.warning("ChatService falling back to in-memory store: %s", exc)
                 self._client = None
@@ -165,6 +157,53 @@ class ChatService:
                 self._messages = None
         else:
             _LOGGER.info("ChatService using in-memory store (MongoDB disabled)")
+
+    def _ensure_indexes(self) -> None:
+        """Create indexes if they don't already exist (check by key pattern)."""
+        if self._sessions is None or self._messages is None:
+            return
+        
+        def has_index_with_keys(indexes: dict, keys: list) -> bool:
+            """Check if an index with the given keys already exists."""
+            target_key = dict(keys)
+            for idx_info in indexes.values():
+                if idx_info.get("key") == list(target_key.items()):
+                    return True
+            return False
+        
+        # Check existing indexes for sessions collection
+        existing_session_indexes = self._sessions.index_information()
+        
+        if not has_index_with_keys(existing_session_indexes, [("user_id", ASCENDING)]):
+            try:
+                self._sessions.create_index(
+                    [("user_id", ASCENDING)],
+                    name="user_id_idx"
+                )
+            except Exception:
+                pass
+        
+        if not has_index_with_keys(existing_session_indexes, [("updated_at", ASCENDING)]):
+            try:
+                self._sessions.create_index(
+                    [("updated_at", ASCENDING)],
+                    expireAfterSeconds=2592000,  # 30 days
+                    name="updated_at_ttl_idx"
+                )
+            except Exception:
+                pass
+        
+        # Check existing indexes for messages collection
+        existing_message_indexes = self._messages.index_information()
+        
+        if not has_index_with_keys(existing_message_indexes, [("session_id", ASCENDING), ("created_at", ASCENDING)]):
+            try:
+                self._messages.create_index(
+                    [("session_id", ASCENDING), ("created_at", ASCENDING)],
+                    name="session_created_idx"
+                )
+            except Exception:
+                pass
 
     # Session management -------------------------------------------------
     def create_session(self, user_id: str, email: Optional[str], display_name: Optional[str]) -> Dict[str, Any]:

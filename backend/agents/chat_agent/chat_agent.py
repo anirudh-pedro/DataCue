@@ -138,12 +138,20 @@ Rules:
 2. Output ONLY a pandas operation that returns data
 3. The DataFrame is called 'df'
 4. NO assignments, NO print statements
-5. Return expressions like: df.groupby('col').sum() or df['col'].mean()
-6. For aggregations, use .reset_index() to get a proper DataFrame
+5. For single values (sum, count, mean): just return the value, e.g. df['revenue'].sum()
+6. For grouped data: use .reset_index(), e.g. df.groupby('region')['revenue'].sum().reset_index()
+7. For row counts: use len(df) or df.shape[0]
+
+Examples:
+- Total of column: df['revenue'].sum()
+- Average of column: df['age'].mean()
+- Count of rows: len(df)
+- Grouped sum: df.groupby('region')['revenue'].sum().reset_index()
+- Filter and count: len(df[df['region'] == 'North'])
 
 Respond with ONLY valid JSON:
 {{
-  "query": "df.groupby('category')['value'].sum().reset_index()",
+  "query": "df['revenue'].sum()",
   "insight": "Brief explanation of what this shows"
 }}"""
 
@@ -179,14 +187,34 @@ Respond with ONLY valid JSON:
     def _execute_query(self, query: str, df: pd.DataFrame) -> Dict[str, Any]:
         """Execute the pandas query safely and return raw result"""
         try:
-            # Create a restricted namespace - only allow df and pd
+            # Create a restricted namespace - only allow df, pd, and safe builtins
+            safe_builtins = {
+                'len': len,
+                'sum': sum,
+                'min': min,
+                'max': max,
+                'abs': abs,
+                'round': round,
+                'sorted': sorted,
+                'list': list,
+                'dict': dict,
+                'str': str,
+                'int': int,
+                'float': float,
+                'bool': bool,
+                'True': True,
+                'False': False,
+                'None': None,
+            }
+            
             namespace = {
                 'df': df,
-                'pd': pd
+                'pd': pd,
+                '__builtins__': safe_builtins
             }
             
             # Execute query with restricted builtins
-            result = eval(query, {"__builtins__": {}}, namespace)
+            result = eval(query, namespace)
             
             return {
                 "raw_result": result,

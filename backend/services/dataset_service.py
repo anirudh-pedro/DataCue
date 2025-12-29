@@ -30,12 +30,8 @@ class DatasetService:
                 self._collection = db["session_dataset_rows"]
                 self._datasets_meta = db["session_datasets_meta"]
                 
-                # Create indexes for efficient querying
-                self._collection.create_index([("session_id", 1), ("dataset_id", 1)])
-                self._collection.create_index([("dataset_id", 1)])
-                self._datasets_meta.create_index([("session_id", 1)])
-                self._datasets_meta.create_index([("session_id", 1), ("dataset_id", 1)])
-                self._datasets_meta.create_index([("session_id", 1), ("created_at", -1)])
+                # Create indexes for efficient querying (check before creating)
+                self._ensure_indexes()
                 
                 LOGGER.info("DatasetService initialized with MongoDB")
             except Exception as exc:
@@ -43,6 +39,70 @@ class DatasetService:
                 self._client = None
         else:
             LOGGER.info("DatasetService disabled (no MONGO_URI configured)")
+
+    def _ensure_indexes(self) -> None:
+        """Create indexes if they don't already exist (check by key pattern)."""
+        if self._collection is None or self._datasets_meta is None:
+            return
+        
+        def has_index_with_keys(indexes: dict, keys: list) -> bool:
+            """Check if an index with the given keys already exists."""
+            target_key = dict(keys)
+            for idx_info in indexes.values():
+                if idx_info.get("key") == list(target_key.items()):
+                    return True
+            return False
+        
+        # Check existing indexes for session_dataset_rows collection
+        existing_row_indexes = self._collection.index_information()
+        
+        if not has_index_with_keys(existing_row_indexes, [("session_id", 1), ("dataset_id", 1)]):
+            try:
+                self._collection.create_index(
+                    [("session_id", 1), ("dataset_id", 1)],
+                    name="session_dataset_idx"
+                )
+            except Exception:
+                pass  # Index exists with different name
+        
+        if not has_index_with_keys(existing_row_indexes, [("dataset_id", 1)]):
+            try:
+                self._collection.create_index(
+                    [("dataset_id", 1)],
+                    name="dataset_id_idx"
+                )
+            except Exception:
+                pass
+        
+        # Check existing indexes for session_datasets_meta collection
+        existing_meta_indexes = self._datasets_meta.index_information()
+        
+        if not has_index_with_keys(existing_meta_indexes, [("session_id", 1)]):
+            try:
+                self._datasets_meta.create_index(
+                    [("session_id", 1)],
+                    name="session_id_idx"
+                )
+            except Exception:
+                pass
+        
+        if not has_index_with_keys(existing_meta_indexes, [("session_id", 1), ("dataset_id", 1)]):
+            try:
+                self._datasets_meta.create_index(
+                    [("session_id", 1), ("dataset_id", 1)],
+                    name="session_dataset_meta_idx"
+                )
+            except Exception:
+                pass
+        
+        if not has_index_with_keys(existing_meta_indexes, [("session_id", 1), ("created_at", -1)]):
+            try:
+                self._datasets_meta.create_index(
+                    [("session_id", 1), ("created_at", -1)],
+                    name="session_created_idx"
+                )
+            except Exception:
+                pass
 
     @property
     def is_enabled(self) -> bool:
@@ -210,6 +270,50 @@ class DatasetService:
         except Exception as exc:
             LOGGER.error("Failed to fetch dataset metadata: %s", exc)
             return None
+
+    def get_all_rows(
+        self, 
+        session_id: str, 
+        dataset_id: Optional[str] = None,
+        limit: int = 10000
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all rows from a dataset (with optional limit).
+        
+        Args:
+            session_id: Session ID
+            dataset_id: Optional dataset ID (uses latest if not provided)
+            limit: Maximum rows to return (default 10000)
+            
+        Returns:
+            List of row documents
+        """
+        if not self.is_enabled:
+            return []
+        
+        try:
+            # If no dataset_id, get the latest dataset for this session
+            if not dataset_id:
+                meta = self.get_session_dataset(session_id)
+                if meta:
+                    dataset_id = meta.get("dataset_id")
+                else:
+                    return []
+            
+            query: Dict[str, Any] = {
+                "session_id": session_id,
+                "dataset_id": dataset_id
+            }
+            
+            cursor = self._collection.find(
+                query,
+                {"_id": 0, "session_id": 0, "dataset_id": 0, "_row_index": 0}
+            ).limit(limit)
+            
+            return list(cursor)
+        except Exception as exc:
+            LOGGER.error("Failed to fetch all rows: %s", exc)
+            return []
 
     def get_sample_rows(self, *, dataset_id: str, session_id: Optional[str] = None, limit: int = 5) -> List[Dict[str, Any]]:
         """Get sample rows from a dataset."""

@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
-from core.auth import get_current_user, UserInfo
+from core.auth import get_current_user, FirebaseUser
 from services.ingestion_service import IngestionService
 from shared import storage
 from shared.utils import clean_response
@@ -16,7 +16,7 @@ async def upload_dataset(
     file: UploadFile = File(..., description="Dataset file (CSV or Excel)"),
     sheet_name: str | None = Form(default=None),
     session_id: str | None = Form(default=None, description="Optional session ID for MongoDB storage"),
-    current_user: UserInfo = Depends(get_current_user)
+    current_user: FirebaseUser = Depends(get_current_user)
 ):
     try:
         contents = await file.read()

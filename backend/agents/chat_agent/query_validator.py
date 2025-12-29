@@ -9,11 +9,11 @@ from typing import Dict, Any, List, Set
 
 
 # ============== FORBIDDEN OPERATIONS ==============
-# SQL-style dangerous operations
+# SQL-style dangerous operations (pandas .drop() handled separately)
 SQL_FORBIDDEN = {
-    'delete', 'drop', 'truncate', 'insert', 'update', 'alter',
+    'delete', 'truncate', 'insert', 'update', 'alter',
     'create', 'replace', 'exec', 'execute', 'grant', 'revoke',
-    'commit', 'rollback', 'merge', 'into'
+    'commit', 'rollback', 'merge'
 }
 
 # Python dangerous operations
@@ -30,13 +30,15 @@ SYSTEM_FORBIDDEN = {
     'shutil', 'pathlib', 'tempfile', 'socket', 'requests', 'urllib'
 }
 
-# Pandas in-place modifications
+# Pandas in-place modifications (method calls that modify data)
 PANDAS_FORBIDDEN = {
     'inplace=true', 'inplace = true', 'to_csv', 'to_excel',
     'to_sql', 'to_pickle', 'to_parquet', 'to_hdf', 'to_feather',
-    '.drop(', '.pop(', '.insert(', '.update(', 'del ',
-    '.at[', '.iat[', '.loc[', '.iloc['  # Only forbidden if assignment follows
+    '.pop(', '.insert(', '.update(', 'del ',
 }
+
+# Safe methods that look like forbidden words but are OK
+SAFE_METHODS = {'dropna', 'drop_duplicates', 'into'}
 
 # ============== ALLOWED OPERATIONS ==============
 ALLOWED_PANDAS_METHODS = {
@@ -131,9 +133,9 @@ class QueryValidator:
         
         # Check 5: No dangerous attribute access
         dangerous_patterns = [
-            r'__\w+__',           # Dunder methods
-            r'\.to_\w+\(',        # Export methods
-            r'import\s+',         # Import statements
+            r'__(?!init__)\w+__',  # Dunder methods except common safe ones
+            r'\.to_(?!dict|list|numpy|frame|string)\w+\(',  # Export methods (allow to_dict, to_list, etc.)
+            r'\bimport\s+',         # Import statements
             r'lambda.*:.*open',   # Lambda with file operations
         ]
         for pattern in dangerous_patterns:

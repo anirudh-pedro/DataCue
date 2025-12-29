@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from core.auth import get_current_user, UserInfo
+from core.auth import get_current_user, FirebaseUser
 from services.dashboard_service import DashboardService
 from services.dataset_service import DatasetService
 from shared.utils import clean_response
@@ -45,7 +45,7 @@ class GenerateDashboardRequest(BaseModel):
 @router.post("/generate")
 def generate_dashboard(
     payload: GenerateDashboardRequest,
-    current_user: UserInfo = Depends(get_current_user)
+    current_user: FirebaseUser = Depends(get_current_user)
 ):
     """
     Generate a dashboard from dataset
