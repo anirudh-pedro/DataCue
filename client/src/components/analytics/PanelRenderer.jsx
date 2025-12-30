@@ -20,41 +20,78 @@ import KpiPanel from './KpiPanel';
 import DataTable from './DataTable';
 import InsightsPanel from './InsightsPanel';
 
-// Dark theme config for Plotly charts
-const DARK_THEME = {
+// Professional LIGHT theme config for Plotly charts (Power BI style)
+const CHART_THEME = {
   paper_bgcolor: 'transparent',
   plot_bgcolor: 'transparent',
   font: {
-    family: 'Inter, system-ui, sans-serif',
-    color: '#94a3b8',
+    family: 'Segoe UI, Inter, -apple-system, BlinkMacSystemFont, Roboto, sans-serif',
+    color: '#374151',
     size: 11,
   },
-  margin: { t: 10, r: 10, b: 40, l: 50 },
+  margin: { t: 10, r: 15, b: 40, l: 50 },
   xaxis: {
-    gridcolor: 'rgba(100, 116, 139, 0.15)',
-    zerolinecolor: 'rgba(100, 116, 139, 0.3)',
-    tickfont: { size: 10 },
+    gridcolor: 'rgba(229, 231, 235, 0.8)',
+    zerolinecolor: 'rgba(209, 213, 219, 0.8)',
+    tickfont: { size: 10, color: '#6b7280' },
+    title: { font: { size: 11, color: '#374151' } },
+    linecolor: '#e5e7eb',
+    showgrid: true,
   },
   yaxis: {
-    gridcolor: 'rgba(100, 116, 139, 0.15)',
-    zerolinecolor: 'rgba(100, 116, 139, 0.3)',
-    tickfont: { size: 10 },
+    gridcolor: 'rgba(229, 231, 235, 0.8)',
+    zerolinecolor: 'rgba(209, 213, 219, 0.8)',
+    tickfont: { size: 10, color: '#6b7280' },
+    title: { font: { size: 11, color: '#374151' } },
+    linecolor: '#e5e7eb',
+    showgrid: true,
   },
+  // Power BI-inspired color palette
   colorway: [
-    '#6366f1', '#8b5cf6', '#a855f7', '#ec4899',
-    '#f43f5e', '#f97316', '#eab308', '#22c55e',
-    '#14b8a6', '#06b6d4', '#3b82f6', '#6366f1',
+    '#118DFF', // Primary Blue
+    '#12239E', // Dark Blue
+    '#E66C37', // Orange
+    '#6B007B', // Purple
+    '#E044A7', // Pink
+    '#744EC2', // Violet
+    '#D9B300', // Yellow
+    '#D64550', // Red
+    '#197278', // Teal
+    '#1AAB40', // Green
+    '#893B7F', // Magenta
+    '#4E8542', // Forest
   ],
   hoverlabel: {
-    bgcolor: '#1e293b',
-    bordercolor: '#334155',
-    font: { color: '#f1f5f9', size: 12 },
+    bgcolor: '#ffffff',
+    bordercolor: '#e5e7eb',
+    font: { color: '#111827', size: 12, family: 'Segoe UI, sans-serif' },
+  },
+  legend: {
+    font: { color: '#374151', size: 10 },
+    bgcolor: 'rgba(255,255,255,0.9)',
+    bordercolor: '#e5e7eb',
+    borderwidth: 1,
+    orientation: 'h',
+    y: -0.15,
+  },
+  modebar: {
+    bgcolor: 'transparent',
+    color: '#9ca3af',
+    activecolor: '#118DFF',
   },
 };
 
 const PanelRenderer = ({ panel }) => {
   const { type, data, config, figure } = panel;
   const chartType = type?.toLowerCase() || 'bar';
+
+  // Memoize chart data normalization (must be before any early returns to satisfy React hooks rules)
+  const chartData = useMemo(() => {
+    if (!data || !Array.isArray(data) || data.length === 0) {
+      return null;
+    }
+    return data;
+  }, [data]);
 
   // Handle KPI panels
   if (chartType === 'kpi') {
@@ -79,7 +116,7 @@ const PanelRenderer = ({ panel }) => {
       <Plot
         data={figure.data}
         layout={{
-          ...DARK_THEME,
+          ...CHART_THEME,
           ...(figure.layout || {}),
           autosize: true,
         }}
@@ -93,15 +130,7 @@ const PanelRenderer = ({ panel }) => {
     );
   }
 
-  // Fallback: Normalize raw data for charts
-  const chartData = useMemo(() => {
-    if (!data || !Array.isArray(data) || data.length === 0) {
-      return null;
-    }
-    return data;
-  }, [data]);
-
-  // Handle empty data
+  // Handle empty data (fallback for raw data charts)
   if (!chartData) {
     return (
       <div className="h-full flex items-center justify-center text-slate-500 text-sm">
@@ -117,7 +146,7 @@ const PanelRenderer = ({ panel }) => {
     <Plot
       data={traces}
       layout={{
-        ...DARK_THEME,
+        ...CHART_THEME,
         ...layout,
         autosize: true,
       }}

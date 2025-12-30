@@ -48,25 +48,25 @@ const DataTable = ({ data, maxRows = 50 }) => {
 
   if (!columns.length) {
     return (
-      <div className="h-full flex items-center justify-center text-slate-500 text-sm">
+      <div className="h-full flex items-center justify-center text-gray-400 text-sm">
         No data available
       </div>
     );
   }
 
   return (
-    <div className="h-full overflow-auto scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
+    <div className="h-full overflow-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent">
       <table className="w-full text-sm border-collapse">
         <thead className="sticky top-0 z-10">
-          <tr className="bg-slate-800/90 backdrop-blur-sm">
+          <tr className="bg-gray-50">
             {columns.map((col, index) => (
               <th
                 key={col}
                 className={`
                   px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider
-                  text-slate-400 border-b border-slate-700/50
-                  ${index === 0 ? 'rounded-tl-lg' : ''}
-                  ${index === columns.length - 1 ? 'rounded-tr-lg' : ''}
+                  text-gray-600 border-b border-gray-200
+                  ${index === 0 ? '' : ''}
+                  ${index === columns.length - 1 ? '' : ''}
                 `}
               >
                 {formatHeader(col)}
@@ -79,16 +79,16 @@ const DataTable = ({ data, maxRows = 50 }) => {
             <tr
               key={rowIndex}
               className={`
-                border-b border-slate-800/40
+                border-b border-gray-100
                 transition-colors duration-150
-                hover:bg-slate-800/50
-                ${rowIndex % 2 === 0 ? 'bg-slate-900/20' : 'bg-transparent'}
+                hover:bg-blue-50
+                ${rowIndex % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}
               `}
             >
               {columns.map((col) => (
                 <td
                   key={col}
-                  className="px-3 py-2 text-slate-300 whitespace-nowrap"
+                  className="px-3 py-2 text-gray-700 whitespace-nowrap"
                 >
                   {formatCell(row[col])}
                 </td>

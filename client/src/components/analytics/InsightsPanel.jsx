@@ -12,14 +12,14 @@ import { HiLightBulb, HiSparkles, HiArrowTrendingUp } from 'react-icons/hi2';
 const InsightsPanel = ({ insights }) => {
   if (!insights || !Array.isArray(insights) || insights.length === 0) {
     return (
-      <div className="h-full flex items-center justify-center text-slate-500 text-sm">
+      <div className="h-full flex items-center justify-center text-gray-400 text-sm">
         No insights available
       </div>
     );
   }
 
   return (
-    <div className="h-full flex items-center gap-4 overflow-x-auto px-2 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
+    <div className="h-full flex items-center gap-3 overflow-x-auto px-1 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent">
       {insights.map((insight, index) => (
         <InsightCard key={index} insight={insight} index={index} />
       ))}
@@ -32,11 +32,11 @@ const InsightCard = ({ insight, index }) => {
   const icons = [HiLightBulb, HiSparkles, HiArrowTrendingUp];
   const Icon = icons[index % icons.length];
   
-  // Get color based on index
+  // Get color based on index (Power BI style colors)
   const colors = [
-    { bg: 'bg-amber-500/20', text: 'text-amber-400', border: 'border-amber-500/30' },
-    { bg: 'bg-indigo-500/20', text: 'text-indigo-400', border: 'border-indigo-500/30' },
-    { bg: 'bg-emerald-500/20', text: 'text-emerald-400', border: 'border-emerald-500/30' },
+    { bg: 'bg-amber-50', text: 'text-amber-600', border: 'border-amber-200' },
+    { bg: 'bg-blue-50', text: 'text-blue-600', border: 'border-blue-200' },
+    { bg: 'bg-emerald-50', text: 'text-emerald-600', border: 'border-emerald-200' },
   ];
   const color = colors[index % colors.length];
 
@@ -45,13 +45,13 @@ const InsightCard = ({ insight, index }) => {
 
   return (
     <div className={`
-      flex-shrink-0 flex items-center gap-3
-      px-4 py-2 rounded-lg
+      flex-shrink-0 flex items-center gap-2
+      px-3 py-2 rounded-lg
       border ${color.border} ${color.bg}
-      max-w-[400px]
+      max-w-[350px]
     `}>
-      <Icon className={`${color.text} text-lg flex-shrink-0`} />
-      <p className="text-sm text-slate-300 line-clamp-2">
+      <Icon className={`${color.text} text-base flex-shrink-0`} />
+      <p className="text-sm text-gray-700 line-clamp-2">
         {text}
       </p>
     </div>

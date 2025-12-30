@@ -1,106 +1,105 @@
 /**
- * DashboardPanel - Individual panel wrapper for analytics dashboard
+ * DashboardPanel - Power BI-style professional panel wrapper
  * 
- * Positions itself using CSS Grid based on layout config:
- * - x: grid column start (0-indexed)
- * - y: grid row start (0-indexed)
- * - w: column span
- * - h: row span
+ * Features:
+ * - Clean white card design
+ * - Compact header with title and subtitle
+ * - Colored accent bar based on chart type
+ * - Hover effects for interactivity
+ * - Responsive sizing
  */
 
-import { useMemo } from 'react';
-import { FiMaximize2, FiMoreHorizontal, FiRefreshCw } from 'react-icons/fi';
+import { FiMoreVertical, FiMaximize2 } from 'react-icons/fi';
+
+// Accent colors for different chart types
+const chartAccentColors = {
+  bar: '#6366f1',       // Indigo
+  grouped_bar: '#6366f1',
+  line: '#06b6d4',      // Cyan
+  time_series: '#06b6d4',
+  pie: '#8b5cf6',       // Purple
+  donut: '#8b5cf6',
+  scatter: '#10b981',   // Emerald
+  scatter_plot: '#10b981',
+  histogram: '#f59e0b', // Amber
+  heatmap: '#ef4444',   // Red
+  correlation_heatmap: '#ef4444',
+  kpi: '#3b82f6',       // Blue
+  table: '#64748b',     // Slate
+  insights: '#f59e0b',  // Amber
+  default: '#6366f1',
+};
 
 const DashboardPanel = ({
   panel,
-  layout,
+  size = 'medium',
   children,
-  onMaximize,
-  onRefresh,
-  onOptions,
 }) => {
-  // Calculate grid positioning
-  const panelStyle = useMemo(() => {
-    const { x = 0, y = 0, w = 6, h = 3 } = panel.layout || {};
-    
-    return {
-      gridColumn: `${x + 1} / span ${w}`,
-      gridRow: `${y + 1} / span ${h}`,
-    };
-  }, [panel.layout]);
-
-  // Determine if panel is compact (1 row height)
-  const isCompact = (panel.layout?.h || 3) === 1;
+  const chartType = panel.type?.toLowerCase() || 'default';
+  const accentColor = chartAccentColors[chartType] || chartAccentColors.default;
+  const isKpi = chartType === 'kpi';
+  
+  // Size-based height
+  const heightClasses = {
+    kpi: 'h-full min-h-[100px]',
+    small: 'h-full min-h-[280px]',
+    medium: 'h-full min-h-[280px]',
+    large: 'h-full min-h-[280px]',
+    full: 'h-full min-h-[280px]',
+  };
 
   return (
     <div
-      style={panelStyle}
       className={`
         group relative flex flex-col
-        rounded-xl border border-slate-800/60
-        bg-gradient-to-br from-slate-900/95 to-slate-900/80
-        shadow-lg shadow-black/20
-        backdrop-blur-sm
-        transition-all duration-200
-        hover:border-slate-700/80
-        hover:shadow-xl hover:shadow-black/30
+        bg-white rounded-lg
+        border border-gray-200
+        shadow-sm hover:shadow-md
+        transition-shadow duration-200
         overflow-hidden
+        ${heightClasses[size] || heightClasses.medium}
       `}
     >
-      {/* Panel Header */}
-      <div className={`
-        flex items-center justify-between
-        border-b border-slate-800/40
-        ${isCompact ? 'px-3 py-2' : 'px-4 py-3'}
-      `}>
-        <div className="flex-1 min-w-0">
-          <h3 className={`
-            font-medium text-white truncate
-            ${isCompact ? 'text-xs' : 'text-sm'}
-          `}>
-            {panel.title}
-          </h3>
-          {panel.subtitle && !isCompact && (
-            <p className="text-xs text-slate-500 truncate mt-0.5">
-              {panel.subtitle}
-            </p>
-          )}
-        </div>
-
-        {/* Panel Actions - Visible on hover */}
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          {onRefresh && (
-            <button
-              onClick={() => onRefresh(panel.id)}
-              className="p-1.5 rounded-md text-slate-500 hover:text-white hover:bg-slate-800/70 transition-colors"
-              title="Refresh"
-            >
-              <FiRefreshCw className="text-xs" />
-            </button>
-          )}
-          {onMaximize && (
-            <button
-              onClick={() => onMaximize(panel.id)}
-              className="p-1.5 rounded-md text-slate-500 hover:text-white hover:bg-slate-800/70 transition-colors"
-              title="Maximize"
+      {/* Top accent bar */}
+      <div 
+        className="h-1 w-full flex-shrink-0"
+        style={{ backgroundColor: accentColor }}
+      />
+      
+      {/* Panel Header - Only show for non-KPI panels */}
+      {!isKpi && panel.title && (
+        <div className="flex items-start justify-between px-3 pt-3 pb-1 flex-shrink-0">
+          <div className="min-w-0 flex-1">
+            <h3 className="text-sm font-semibold text-gray-900 truncate">
+              {panel.title}
+            </h3>
+            {panel.subtitle && (
+              <p className="text-xs text-gray-500 mt-0.5 truncate">
+                {panel.subtitle}
+              </p>
+            )}
+          </div>
+          
+          {/* Action buttons - visible on hover */}
+          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
+            <button 
+              className="p-1 hover:bg-gray-100 rounded text-gray-400 hover:text-gray-600"
+              title="Expand"
             >
               <FiMaximize2 className="text-xs" />
             </button>
-          )}
-          {onOptions && (
-            <button
-              onClick={() => onOptions(panel.id)}
-              className="p-1.5 rounded-md text-slate-500 hover:text-white hover:bg-slate-800/70 transition-colors"
-              title="Options"
+            <button 
+              className="p-1 hover:bg-gray-100 rounded text-gray-400 hover:text-gray-600"
+              title="More options"
             >
-              <FiMoreHorizontal className="text-xs" />
+              <FiMoreVertical className="text-xs" />
             </button>
-          )}
+          </div>
         </div>
-      </div>
-
+      )}
+      
       {/* Panel Content */}
-      <div className="flex-1 p-2 overflow-hidden">
+      <div className={`flex-1 ${isKpi ? 'p-3' : 'px-3 pb-3'} min-h-0`}>
         {children}
       </div>
     </div>

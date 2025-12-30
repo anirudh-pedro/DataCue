@@ -98,13 +98,20 @@ const KpiPanel = ({ panel }) => {
 
   return (
     <div className={`
-      h-full flex items-center
-      ${isCompact ? 'justify-between px-2' : 'flex-col justify-center'}
+      h-full flex
+      ${isCompact ? 'flex-col justify-center' : 'flex-col justify-center'}
     `}>
+      {/* Title */}
+      {panel.title && (
+        <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
+          {panel.title}
+        </div>
+      )}
+      
       {/* Primary Value */}
       <div className={`
-        font-bold text-white leading-none
-        ${isCompact ? 'text-2xl' : 'text-4xl mb-2'}
+        font-bold text-gray-900 leading-none
+        ${isCompact ? 'text-2xl md:text-3xl' : 'text-4xl mb-2'}
       `}>
         {formatNumber(kpiData.value, {
           compact: true,
@@ -122,10 +129,13 @@ const KpiPanel = ({ panel }) => {
         />
       )}
 
-      {/* Previous Value */}
-      {kpiData.previousValue && !isCompact && (
-        <div className="text-xs text-slate-500 mt-1">
-          vs {formatNumber(kpiData.previousValue, { compact: true })} previous
+      {/* Previous Value or Subtitle */}
+      {(kpiData.previousValue || panel.subtitle) && (
+        <div className="text-xs text-gray-500 mt-1">
+          {kpiData.previousValue 
+            ? `vs ${formatNumber(kpiData.previousValue, { compact: true })} previous`
+            : panel.subtitle
+          }
         </div>
       )}
     </div>
@@ -145,21 +155,21 @@ const ChangeIndicator = ({ change, type, isCompact }) => {
   const config = {
     positive: {
       icon: FiTrendingUp,
-      bg: 'bg-emerald-500/20',
-      text: 'text-emerald-400',
-      border: 'border-emerald-500/30',
+      bg: 'bg-emerald-50',
+      text: 'text-emerald-600',
+      border: 'border-emerald-200',
     },
     negative: {
       icon: FiTrendingDown,
-      bg: 'bg-rose-500/20',
-      text: 'text-rose-400',
-      border: 'border-rose-500/30',
+      bg: 'bg-rose-50',
+      text: 'text-rose-600',
+      border: 'border-rose-200',
     },
     neutral: {
       icon: FiMinus,
-      bg: 'bg-slate-500/20',
-      text: 'text-slate-400',
-      border: 'border-slate-500/30',
+      bg: 'bg-gray-50',
+      text: 'text-gray-500',
+      border: 'border-gray-200',
     },
   };
 
