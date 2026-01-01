@@ -26,8 +26,9 @@ const Analytics = () => {
   const [dashboard, setDashboard] = useState(null);
   
   // Session info from navigation state or localStorage
-  const [sessionId, setSessionId] = useState('');
-  const [datasetId, setDatasetId] = useState('');
+  // Initialize as null to differentiate between "not loaded" and "loaded but empty"
+  const [sessionId, setSessionId] = useState(null);
+  const [datasetId, setDatasetId] = useState(null);
 
   // Auth check
   useEffect(() => {
@@ -43,18 +44,34 @@ const Analytics = () => {
   useEffect(() => {
     const stateSessionId = location.state?.sessionId;
     const stateDatasetId = location.state?.datasetId;
-    const storedSessionId = localStorage.getItem('chatSessionId');
+    // Check both 'sessionId' (new standard) and 'chatSessionId' (legacy) for backward compatibility
+    const storedSessionId = localStorage.getItem('sessionId') || localStorage.getItem('chatSessionId');
     const storedDatasetId = localStorage.getItem('datasetId');
 
-    setSessionId(stateSessionId || storedSessionId || '');
-    setDatasetId(stateDatasetId || storedDatasetId || '');
+    const finalSessionId = stateSessionId || storedSessionId || '';
+    const finalDatasetId = stateDatasetId || storedDatasetId || '';
+    
+    setSessionId(finalSessionId);
+    setDatasetId(finalDatasetId);
+    
+    // Ensure standard key is set for consistency
+    if (finalSessionId && !localStorage.getItem('sessionId')) {
+      localStorage.setItem('sessionId', finalSessionId);
+    }
   }, [location.state]);
 
   // Generate dashboard when session is available
   useEffect(() => {
+    // Wait for session loading to complete (null = not yet loaded)
+    if (sessionId === null) return;
+    
     if (sessionId && !hasGenerated.current) {
       hasGenerated.current = true;
       generateDashboard();
+    } else if (!sessionId) {
+      // No session ID available - show error instead of infinite loading
+      setError('No session ID available. Please upload a dataset first.');
+      setIsLoading(false);
     }
   }, [sessionId]);
 

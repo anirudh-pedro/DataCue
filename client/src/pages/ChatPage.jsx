@@ -68,15 +68,15 @@ const ChatPage = () => {
           metadata: message.metadata,
           showDashboardButton: Boolean(message.showDashboardButton),
         });
-        
+
         if (response.ok) {
           return; // Success
         }
-        
+
         if (attempt === retries) {
           throw new Error(`Failed to persist message after ${retries} attempts`);
         }
-        
+
         // Wait before retry (exponential backoff)
         await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
       } catch (error) {
@@ -154,22 +154,22 @@ const ChatPage = () => {
         const payload = await response.json();
         const history = Array.isArray(payload.messages)
           ? payload.messages.map((message) => ({
-              id: message.id || generateMessageId(),
-              role: message.role,
-              content: message.content,
-              timestamp: message.timestamp,
-              chart: message.chart,
-              metadata: message.metadata || {},
-              showDashboardButton: Boolean(message.showDashboardButton),
-            }))
+            id: message.id || generateMessageId(),
+            role: message.role,
+            content: message.content,
+            timestamp: message.timestamp,
+            chart: message.chart,
+            metadata: message.metadata || {},
+            showDashboardButton: Boolean(message.showDashboardButton),
+          }))
           : [];
 
         setMessages(history);
-        
+
         // Check if dashboard data exists in MongoDB
         const hasDashboardButton = history.some((message) => message.showDashboardButton);
         setHasDashboard(hasDashboardButton);
-        
+
         return true;
       } catch (error) {
         console.error('Failed to load chat history:', error);
@@ -197,6 +197,7 @@ const ChatPage = () => {
       const payload = await response.json();
       const newSessionId = payload.session_id;
       localStorage.setItem('sessionId', newSessionId);
+      localStorage.setItem('chatSessionId', newSessionId); // Backward compatibility
       localStorage.setItem('sessionUserId', user.uid);
       setSessionId(newSessionId);
       setMessages([]);
@@ -208,10 +209,10 @@ const ChatPage = () => {
       if (isInitializingRef.current) {
         return;
       }
-      
+
       isInitializingRef.current = true;
       setIsLoadingHistory(true);
-      
+
       try {
         const storedSessionId = localStorage.getItem('sessionId') || localStorage.getItem('chatSessionId');
         const storedUserId = localStorage.getItem('sessionUserId') || localStorage.getItem('chatSessionUserId');
@@ -220,8 +221,9 @@ const ChatPage = () => {
           const loaded = await loadHistory(storedSessionId);
           if (loaded) {
             setSessionId(storedSessionId);
-            // Update to new key format
+            // Update to new key format (keep both for compatibility)
             localStorage.setItem('sessionId', storedSessionId);
+            localStorage.setItem('chatSessionId', storedSessionId);
             localStorage.setItem('sessionUserId', user.uid);
             return;
           }
@@ -302,7 +304,7 @@ const ChatPage = () => {
     // Generate a title from the first user message
     // Take first 50 chars or up to first sentence
     let title = userMessage.trim();
-    
+
     // Find first sentence ending
     const sentenceEnd = title.search(/[.!?]\s/);
     if (sentenceEnd > 0 && sentenceEnd < 60) {
@@ -310,13 +312,13 @@ const ChatPage = () => {
     } else if (title.length > 50) {
       title = title.substring(0, 47) + '...';
     }
-    
+
     return title;
   };
 
   const updateSessionTitle = async (title) => {
     if (!sessionId) return;
-    
+
     try {
       await apiPatch(`/chat/sessions/${sessionId}/title`, { title });
     } catch (error) {
@@ -366,7 +368,7 @@ const ChatPage = () => {
           try {
             const text = await response.text();
             if (text) message = text;
-          } catch (_) {}
+          } catch (_) { }
         }
         // Provide a friendlier hint when analysis hasn't run yet
         if (response.status === 400 && /analy[sz]e_dataset/i.test(message)) {
@@ -376,7 +378,7 @@ const ChatPage = () => {
       }
 
       const payload = await response.json();
-      
+
       // Append text answer
       const assistantMessage = {
         role: 'assistant',
@@ -384,7 +386,7 @@ const ChatPage = () => {
         timestamp: buildTimestamp(),
       };
       appendMessage(assistantMessage);
-      
+
       // If there's a chart, append it separately
       if (payload.chart && payload.chart.figure) {
         appendMessage({
@@ -428,18 +430,18 @@ const ChatPage = () => {
 
   const handleViewDashboard = async () => {
     if (!sessionId) return;
-    
+
     try {
-      // Fetch dashboard data from MongoDB (canonical source)
+      // Fetch dashboard data from database (canonical source)
       const response = await apiGet(`/chat/sessions/${sessionId}/dashboard`);
       if (!response.ok) {
         console.error('No dashboard data found for this session');
         return;
       }
-      
+
       const dashboardData = await response.json();
       if (dashboardData.charts && dashboardData.charts.length > 0) {
-        navigate('/dashboard', { state: { dashboardData } });
+        navigate('/analytics', { state: { dashboardData } });
       }
     } catch (error) {
       console.error('Failed to load dashboard data:', error);
@@ -485,7 +487,7 @@ const ChatPage = () => {
       }
 
       const pipelineResult = await new Promise((resolve, reject) => {
-  const streamUrl = `${API_BASE_URL.replace(/\/+$/, '')}/orchestrator/pipeline/session/${pipelineSessionId}/stream`;
+        const streamUrl = `${API_BASE_URL.replace(/\/+$/, '')}/orchestrator/pipeline/session/${pipelineSessionId}/stream`;
         const eventSource = new EventSource(streamUrl);
 
         eventSource.onmessage = (event) => {
@@ -524,27 +526,27 @@ const ChatPage = () => {
       const datasetName = pipelineResult?.dataset_name || file.name;
       const gridfsId = pipelineResult?.gridfs_id;
       const datasetId = pipelineResult?.steps?.ingestion?.dataset_id || pipelineResult?.dataset_id;
-      
+
       // Store GridFS ID for persistence
       if (gridfsId) {
         localStorage.setItem('datasetGridfsId', gridfsId);
         localStorage.setItem('datasetName', datasetName);
       }
-      
+
       // Store dataset ID if available
       if (datasetId) {
         localStorage.setItem('datasetId', datasetId);
       }
-      
+
       setUploadStatusMessage(STAGE_LABELS.pipeline_complete);
-      
+
       // Auto-generate title from filename on first upload
       const isFirstMessage = messages.filter(m => m.role === 'user' || m.role === 'file').length === 0;
       if (isFirstMessage) {
         const title = `Analysis: ${datasetName}`;
         updateSessionTitle(title);
       }
-      
+
       // Store dashboard data in MongoDB (canonical source)
       const dashboardData = pipelineResult?.steps?.dashboard;
       if (dashboardData && dashboardData.charts && dashboardData.charts.length > 0) {
@@ -563,12 +565,12 @@ const ChatPage = () => {
         } catch (error) {
           console.error('Failed to store dashboard data:', error);
         }
-        
+
         await sleep(500);
-        
+
         // Enable dashboard button
         setHasDashboard(true);
-        
+
         // Show message with dashboard button (don't auto-navigate)
         appendMessage({
           role: 'assistant',
@@ -633,227 +635,67 @@ const ChatPage = () => {
 
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
-        
-        <div className="relative flex flex-1 flex-col">
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".csv,.xlsx,.xls"
-          className="hidden"
-          onChange={handleFileChange}
-        />
-        
-        {/* Health Warning Banner */}
-        {healthWarning && (
-          <div className="absolute top-0 left-0 right-0 z-30 bg-yellow-900/90 border-b border-yellow-700 px-4 py-2 text-center">
-            <p className="text-sm text-yellow-100">{healthWarning}</p>
-          </div>
-        )}
-        
-        {isLoadingHistory && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm">
-            <div className="w-12 h-12 border-4 border-gray-700 border-t-white rounded-full animate-spin" aria-hidden="true" />
-            <p className="mt-4 text-sm text-gray-300">Loading your conversation…</p>
-          </div>
-        )}
-        {isUploading && (
-          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm">
-            <div className="w-12 h-12 border-4 border-gray-700 border-t-white rounded-full animate-spin" aria-hidden="true" />
-            <p className="mt-4 text-sm text-gray-300 text-center whitespace-pre-line">
-              {uploadStatusMessage || DEFAULT_STAGE_MESSAGE}
-            </p>
-          </div>
-        )}
-        
-        {/* Removed floating dashboard button - only show in message */}
-        {messages.length === 0 ? (
-          // Empty State - Centered Input
-          <div className="flex-1 flex flex-col items-center justify-center px-4">
-            <div className="w-full max-w-3xl">
-              {/* Welcome Message */}
-              <div className="text-center mb-8">
-                <div className="w-16 h-16 mx-auto mb-6 rounded-full bg-gray-900 flex items-center justify-center">
-                  <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-                  </svg>
-                </div>
-                <h2 className="text-2xl font-bold text-white mb-2">Welcome to DataCue</h2>
-                <p className="text-gray-400">Your AI-powered data analytics assistant</p>
-              </div>
-              
-              {/* Centered Input Box */}
-              <div className="relative flex items-end gap-2 bg-gray-900 rounded-3xl px-4 py-3 border border-gray-800 focus-within:border-gray-700 transition-colors shadow-lg">
-                {/* Upload Button */}
-                <button
-                  onClick={handleUploadClick}
-                  disabled={isUploading || !sessionReady}
-                  className={`flex-shrink-0 p-2 rounded-lg transition-colors ${
-                    sessionReady ? 'text-gray-400 hover:text-white hover:bg-gray-800' : 'text-gray-600 cursor-not-allowed'
-                  }`}
-                  title={sessionReady ? 'Upload file' : 'Waiting for chat session'}
-                >
-                  <FiUpload className="text-xl" />
-                </button>
-                
-                {/* Textarea */}
-                <textarea
-                  ref={textareaRef}
-                  value={inputMessage}
-                  onChange={handleInputChange}
-                  onKeyPress={handleKeyPress}
-                  placeholder={sessionReady ? 'Message DataCue' : 'Loading your conversation…'}
-                  rows="1"
-                  disabled={!sessionReady}
-                  className={`flex-1 bg-transparent placeholder-gray-500 focus:outline-none resize-none overflow-y-auto text-base leading-6 py-2 ${
-                    sessionReady ? 'text-white' : 'text-gray-500 cursor-not-allowed'
-                  }`}
-                  style={{
-                    maxHeight: '200px',
-                    scrollbarWidth: 'thin',
-                    scrollbarColor: '#4B5563 transparent'
-                  }}
-                />
-                
-                {/* Send Button */}
-                <button
-                  onClick={handleSendMessage}
-                  disabled={!inputMessage.trim() || isUploading || !sessionReady}
-                  className={`flex-shrink-0 p-2 rounded-lg transition-all ${
-                    inputMessage.trim() && sessionReady
-                      ? 'bg-white text-black hover:bg-gray-200'
-                      : 'text-gray-600 cursor-not-allowed'
-                  }`}
-                  title={sessionReady ? 'Send message' : 'Waiting for chat session'}
-                >
-                  <FiSend className="text-xl" />
-                </button>
-              </div>
-              
-              {/* Footer Text */}
-              <div className="text-center mt-3 text-xs text-gray-500">
-                DataCue can make mistakes. Check important info.
-              </div>
-            </div>
-          </div>
-        ) : (
-          <>
-            {/* Messages Container - After First Message */}
-            <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'thin', scrollbarColor: '#4B5563 #000000' }}>
-              <div className="w-full px-4 py-6 space-y-6">
-                {messages.map((msg, index) => {
-                  // Render charts with ChartMessage component
-                  if (msg.role === 'chart') {
-                    return (
-                      <ChartMessage
-                        key={msg.id || index}
-                        chart={msg.chart}
-                        timestamp={msg.timestamp}
-                        messageId={msg.id}
-                      />
-                    );
-                  }
-                  
-                  // Render regular messages
-                  return (
-                    <div
-                      key={msg.id || index}
-                      className={`flex gap-3 ${msg.role === 'assistant' ? 'justify-start' : 'justify-end'}`}
-                    >
-                      {/* AI Avatar - Left */}
-                      {msg.role === 'assistant' && (
-                        <div className="flex-shrink-0 w-8 h-8">
-                          <div className="w-8 h-8 rounded-lg bg-gray-800 flex items-center justify-center">
-                            <HiSparkles className="text-white text-lg" />
-                          </div>
-                        </div>
-                      )}
-                      
-                      {/* Message Content */}
-                      <div className={`max-w-[70%] ${
-                        msg.role === 'assistant' 
-                          ? 'bg-gray-900 rounded-2xl rounded-tl-sm' 
-                          : 'bg-gray-800 rounded-2xl rounded-tr-sm'
-                      } px-4 py-3 border border-gray-800`}>
-                        <div className="text-white text-base leading-7 whitespace-pre-wrap break-words">
-                          {msg.content}
-                        </div>
-                        
-                        {/* Dashboard Buttons */}
-                        {msg.showDashboardButton && (
-                          <div className="mt-3 flex items-center gap-3">
-                            <button
-                              onClick={handleViewDashboard}
-                              className="px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white rounded-lg font-medium transition-all flex items-center gap-2"
-                            >
-                              <HiSparkles className="text-lg" />
-                              View Dashboard
-                            </button>
-                            <button
-                              onClick={() => navigate('/analytics', { 
-                                state: { 
-                                  sessionId: sessionId,
-                                  datasetId: msg.metadata?.datasetId 
-                                } 
-                              })}
-                              className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-700 hover:to-cyan-700 text-white rounded-lg font-medium transition-all flex items-center gap-2"
-                            >
-                              <HiSparkles className="text-lg" />
-                              Analytics View
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                      
-                      {/* User Avatar - Right */}
-                      {msg.role === 'user' && (
-                        <div className="flex-shrink-0 w-8 h-8">
-                          <div className="w-8 h-8 rounded-lg bg-gray-700 flex items-center justify-center">
-                            <FiUser className="text-white text-lg" />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-                
-                {/* Typing Indicator */}
-                {isTyping && (
-                  <div className="flex gap-3 justify-start">
-                    <div className="flex-shrink-0 w-8 h-8">
-                      <div className="w-8 h-8 rounded-lg bg-gray-800 flex items-center justify-center">
-                        <HiSparkles className="text-white text-lg" />
-                      </div>
-                    </div>
-                    <div className="max-w-[70%] bg-gray-900 rounded-2xl rounded-tl-sm px-4 py-3 border border-gray-800">
-                      <div className="flex space-x-1">
-                        <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
-                        <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
-                        <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                
-                <div ref={messagesEndRef} />
-              </div>
-            </div>
 
-            {/* Input Area - Bottom (After First Message) */}
-            <div className="border-t border-gray-900 bg-black">
-              <div className="max-w-3xl mx-auto px-4 py-4">
-                <div className="relative flex items-end gap-2 bg-gray-900 rounded-3xl px-4 py-3 border border-gray-800 focus-within:border-gray-700 transition-colors">
+        <div className="relative flex flex-1 flex-col">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,.xlsx,.xls"
+            className="hidden"
+            onChange={handleFileChange}
+          />
+
+          {/* Health Warning Banner */}
+          {healthWarning && (
+            <div className="absolute top-0 left-0 right-0 z-30 bg-yellow-900/90 border-b border-yellow-700 px-4 py-2 text-center">
+              <p className="text-sm text-yellow-100">{healthWarning}</p>
+            </div>
+          )}
+
+          {isLoadingHistory && (
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm">
+              <div className="w-12 h-12 border-4 border-gray-700 border-t-white rounded-full animate-spin" aria-hidden="true" />
+              <p className="mt-4 text-sm text-gray-300">Loading your conversation…</p>
+            </div>
+          )}
+          {isUploading && (
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm">
+              <div className="w-12 h-12 border-4 border-gray-700 border-t-white rounded-full animate-spin" aria-hidden="true" />
+              <p className="mt-4 text-sm text-gray-300 text-center whitespace-pre-line">
+                {uploadStatusMessage || DEFAULT_STAGE_MESSAGE}
+              </p>
+            </div>
+          )}
+
+          {/* Removed floating dashboard button - only show in message */}
+          {messages.length === 0 ? (
+            // Empty State - Centered Input
+            <div className="flex-1 flex flex-col items-center justify-center px-4">
+              <div className="w-full max-w-3xl">
+                {/* Welcome Message */}
+                <div className="text-center mb-8">
+                  <div className="w-16 h-16 mx-auto mb-6 rounded-full bg-gray-900 flex items-center justify-center">
+                    <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                    </svg>
+                  </div>
+                  <h2 className="text-2xl font-bold text-white mb-2">Welcome to DataCue</h2>
+                  <p className="text-gray-400">Your AI-powered data analytics assistant</p>
+                </div>
+
+                {/* Centered Input Box */}
+                <div className="relative flex items-end gap-2 bg-gray-900 rounded-3xl px-4 py-3 border border-gray-800 focus-within:border-gray-700 transition-colors shadow-lg">
                   {/* Upload Button */}
                   <button
                     onClick={handleUploadClick}
                     disabled={isUploading || !sessionReady}
-                    className={`flex-shrink-0 p-2 rounded-lg transition-colors ${
-                      sessionReady ? 'text-gray-400 hover:text-white hover:bg-gray-800' : 'text-gray-600 cursor-not-allowed'
-                    }`}
+                    className={`flex-shrink-0 p-2 rounded-lg transition-colors ${sessionReady ? 'text-gray-400 hover:text-white hover:bg-gray-800' : 'text-gray-600 cursor-not-allowed'
+                      }`}
                     title={sessionReady ? 'Upload file' : 'Waiting for chat session'}
                   >
                     <FiUpload className="text-xl" />
                   </button>
-                  
+
                   {/* Textarea */}
                   <textarea
                     ref={textareaRef}
@@ -863,39 +705,180 @@ const ChatPage = () => {
                     placeholder={sessionReady ? 'Message DataCue' : 'Loading your conversation…'}
                     rows="1"
                     disabled={!sessionReady}
-                    className={`flex-1 bg-transparent placeholder-gray-500 focus:outline-none resize-none overflow-y-auto text-base leading-6 py-2 ${
-                      sessionReady ? 'text-white' : 'text-gray-500 cursor-not-allowed'
-                    }`}
+                    className={`flex-1 bg-transparent placeholder-gray-500 focus:outline-none resize-none overflow-y-auto text-base leading-6 py-2 ${sessionReady ? 'text-white' : 'text-gray-500 cursor-not-allowed'
+                      }`}
                     style={{
                       maxHeight: '200px',
                       scrollbarWidth: 'thin',
                       scrollbarColor: '#4B5563 transparent'
                     }}
                   />
-                  
+
                   {/* Send Button */}
                   <button
                     onClick={handleSendMessage}
                     disabled={!inputMessage.trim() || isUploading || !sessionReady}
-                    className={`flex-shrink-0 p-2 rounded-lg transition-all ${
-                      inputMessage.trim() && sessionReady
+                    className={`flex-shrink-0 p-2 rounded-lg transition-all ${inputMessage.trim() && sessionReady
                         ? 'bg-white text-black hover:bg-gray-200'
                         : 'text-gray-600 cursor-not-allowed'
-                    }`}
+                      }`}
                     title={sessionReady ? 'Send message' : 'Waiting for chat session'}
                   >
                     <FiSend className="text-xl" />
                   </button>
                 </div>
-                
+
                 {/* Footer Text */}
-                <div className="text-center mt-2 text-xs text-gray-500">
+                <div className="text-center mt-3 text-xs text-gray-500">
                   DataCue can make mistakes. Check important info.
                 </div>
               </div>
             </div>
-          </>
-        )}
+          ) : (
+            <>
+              {/* Messages Container - After First Message */}
+              <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'thin', scrollbarColor: '#4B5563 #000000' }}>
+                <div className="w-full px-4 py-6 space-y-6">
+                  {messages.map((msg, index) => {
+                    // Render charts with ChartMessage component
+                    if (msg.role === 'chart') {
+                      return (
+                        <ChartMessage
+                          key={msg.id || index}
+                          chart={msg.chart}
+                          timestamp={msg.timestamp}
+                          messageId={msg.id}
+                        />
+                      );
+                    }
+
+                    // Render regular messages
+                    return (
+                      <div
+                        key={msg.id || index}
+                        className={`flex gap-3 ${msg.role === 'assistant' ? 'justify-start' : 'justify-end'}`}
+                      >
+                        {/* AI Avatar - Left */}
+                        {msg.role === 'assistant' && (
+                          <div className="flex-shrink-0 w-8 h-8">
+                            <div className="w-8 h-8 rounded-lg bg-gray-800 flex items-center justify-center">
+                              <HiSparkles className="text-white text-lg" />
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Message Content */}
+                        <div className={`max-w-[70%] ${msg.role === 'assistant'
+                            ? 'bg-gray-900 rounded-2xl rounded-tl-sm'
+                            : 'bg-gray-800 rounded-2xl rounded-tr-sm'
+                          } px-4 py-3 border border-gray-800`}>
+                          <div className="text-white text-base leading-7 whitespace-pre-wrap break-words">
+                            {msg.content}
+                          </div>
+
+                          {/* Dashboard Buttons */}
+                          {msg.showDashboardButton && (
+                            <div className="mt-3 flex items-center gap-3">
+                              <button
+                                onClick={handleViewDashboard}
+                                className="px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white rounded-lg font-medium transition-all flex items-center gap-2"
+                              >
+                                <HiSparkles className="text-lg" />
+                                View Dashboard
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* User Avatar - Right */}
+                        {msg.role === 'user' && (
+                          <div className="flex-shrink-0 w-8 h-8">
+                            <div className="w-8 h-8 rounded-lg bg-gray-700 flex items-center justify-center">
+                              <FiUser className="text-white text-lg" />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {/* Typing Indicator */}
+                  {isTyping && (
+                    <div className="flex gap-3 justify-start">
+                      <div className="flex-shrink-0 w-8 h-8">
+                        <div className="w-8 h-8 rounded-lg bg-gray-800 flex items-center justify-center">
+                          <HiSparkles className="text-white text-lg" />
+                        </div>
+                      </div>
+                      <div className="max-w-[70%] bg-gray-900 rounded-2xl rounded-tl-sm px-4 py-3 border border-gray-800">
+                        <div className="flex space-x-1">
+                          <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                          <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                          <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div ref={messagesEndRef} />
+                </div>
+              </div>
+
+              {/* Input Area - Bottom (After First Message) */}
+              <div className="border-t border-gray-900 bg-black">
+                <div className="max-w-3xl mx-auto px-4 py-4">
+                  <div className="relative flex items-end gap-2 bg-gray-900 rounded-3xl px-4 py-3 border border-gray-800 focus-within:border-gray-700 transition-colors">
+                    {/* Upload Button */}
+                    <button
+                      onClick={handleUploadClick}
+                      disabled={isUploading || !sessionReady}
+                      className={`flex-shrink-0 p-2 rounded-lg transition-colors ${sessionReady ? 'text-gray-400 hover:text-white hover:bg-gray-800' : 'text-gray-600 cursor-not-allowed'
+                        }`}
+                      title={sessionReady ? 'Upload file' : 'Waiting for chat session'}
+                    >
+                      <FiUpload className="text-xl" />
+                    </button>
+
+                    {/* Textarea */}
+                    <textarea
+                      ref={textareaRef}
+                      value={inputMessage}
+                      onChange={handleInputChange}
+                      onKeyPress={handleKeyPress}
+                      placeholder={sessionReady ? 'Message DataCue' : 'Loading your conversation…'}
+                      rows="1"
+                      disabled={!sessionReady}
+                      className={`flex-1 bg-transparent placeholder-gray-500 focus:outline-none resize-none overflow-y-auto text-base leading-6 py-2 ${sessionReady ? 'text-white' : 'text-gray-500 cursor-not-allowed'
+                        }`}
+                      style={{
+                        maxHeight: '200px',
+                        scrollbarWidth: 'thin',
+                        scrollbarColor: '#4B5563 transparent'
+                      }}
+                    />
+
+                    {/* Send Button */}
+                    <button
+                      onClick={handleSendMessage}
+                      disabled={!inputMessage.trim() || isUploading || !sessionReady}
+                      className={`flex-shrink-0 p-2 rounded-lg transition-all ${inputMessage.trim() && sessionReady
+                          ? 'bg-white text-black hover:bg-gray-200'
+                          : 'text-gray-600 cursor-not-allowed'
+                        }`}
+                      title={sessionReady ? 'Send message' : 'Waiting for chat session'}
+                    >
+                      <FiSend className="text-xl" />
+                    </button>
+                  </div>
+
+                  {/* Footer Text */}
+                  <div className="text-center mt-2 text-xs text-gray-500">
+                    DataCue can make mistakes. Check important info.
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

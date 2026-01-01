@@ -3,6 +3,7 @@ Result Type Detector Module
 Detects the appropriate visualization type for query results
 """
 
+import numpy as np
 import pandas as pd
 from typing import Dict, Any, List, Optional, Union
 from datetime import datetime
@@ -22,7 +23,7 @@ class ResultTypeDetector:
     
     def detect(
         self, 
-        result: Union[pd.DataFrame, pd.Series, int, float, str],
+        result: Union[pd.DataFrame, pd.Series, int, float, str, np.ndarray, list],
         query: str = "",
         metadata: Dict[str, Any] = None
     ) -> Dict[str, Any]:
@@ -36,35 +37,227 @@ class ResultTypeDetector:
             
         Returns:
             {
-                "type": "kpi" | "table" | "line_chart" | "bar_chart" | "pie_chart",
+                "type": "kpi" | "table" | "list" | "line_chart" | "bar_chart" | "pie_chart" | "text",
                 "data": formatted data for frontend,
-                "config": visualization config
+                "config": visualization config,
+                "meta": additional metadata
             }
         """
+        # Normalize result to JSON-serializable format first
+        result = self._normalize_result(result)
+        
+        # Handle None/NaN
+        if result is None or (isinstance(result, float) and pd.isna(result)):
+            return {
+                "type": "text",
+                "data": {"value": "No result"},
+                "config": {},
+                "meta": {"empty": True}
+            }
+        
         # Handle scalar values (single number)
-        if isinstance(result, (int, float)):
-            return self._format_kpi(result, query)
+        if isinstance(result, (int, float, np.integer, np.floating)):
+            return self._format_kpi(float(result), query)
+        
+        # Handle boolean
+        if isinstance(result, (bool, np.bool_)):
+            return self._format_text(str(result))
         
         # Handle string results
         if isinstance(result, str):
             return self._format_text(result)
         
+        # Handle numpy arrays
+        if isinstance(result, np.ndarray):
+            return self._format_numpy_array(result, query)
+        
+        # Handle plain Python lists
+        if isinstance(result, list):
+            return self._format_list(result, query)
+        
         # Convert Series to DataFrame for consistent handling
         if isinstance(result, pd.Series):
-            result = result.reset_index()
-            if len(result.columns) == 2:
-                result.columns = ['category', 'value']
+            return self._format_series(result, query)
         
         # Handle DataFrame
         if isinstance(result, pd.DataFrame):
             return self._detect_dataframe_type(result, query, metadata)
         
-        # Fallback for unknown types
+        # Fallback for unknown types - convert to string but warn
         return {
             "type": "text",
             "data": {"value": str(result)},
-            "config": {}
+            "config": {},
+            "meta": {"warning": f"Unknown result type: {type(result).__name__}"}
         }
+    
+    def _normalize_result(self, result: Any) -> Any:
+        """
+        Normalize pandas/numpy objects to standard Python types for JSON serialization.
+        This ensures all downstream processing works with clean, serializable data.
+        """
+        # Handle None
+        if result is None:
+            return None
+        
+        # Handle numpy scalar types
+        if isinstance(result, (np.integer, np.floating)):
+            return result.item()
+        
+        if isinstance(result, np.bool_):
+            return bool(result)
+        
+        if isinstance(result, np.ndarray):
+            # Keep as ndarray for further processing
+            return result
+        
+        # Handle pandas nullable types
+        if pd.api.types.is_scalar(result) and pd.isna(result):
+            return None
+        
+        # Return as-is for complex types (Series, DataFrame, list, etc.)
+        return result
+    
+    def _format_numpy_array(self, arr: np.ndarray, query: str = "") -> Dict[str, Any]:
+        """
+        Format numpy array result.
+        Arrays can be:
+        - 1D with unique values (e.g., df['col'].unique())
+        - 1D with aggregated values
+        - Multi-dimensional (convert to table)
+        """
+        # Handle empty array
+        if arr.size == 0:
+            return {
+                "type": "list",
+                "data": {"items": []},
+                "config": {},
+                "meta": {"empty": True, "original_type": "numpy.ndarray"}
+            }
+        
+        # Flatten if multi-dimensional
+        if arr.ndim > 1:
+            # Convert to list of lists for table-like display
+            items = arr.tolist()
+            return {
+                "type": "table",
+                "data": {
+                    "columns": [f"col_{i}" for i in range(arr.shape[1])],
+                    "rows": [dict(zip([f"col_{i}" for i in range(arr.shape[1])], row)) for row in items],
+                    "total_rows": len(items)
+                },
+                "config": {},
+                "meta": {"shape": arr.shape, "original_type": "numpy.ndarray"}
+            }
+        
+        # 1D array - convert to Python list
+        items = arr.tolist()
+        
+        # Single item - check if it should be KPI
+        if len(items) == 1:
+            if isinstance(items[0], (int, float)):
+                return self._format_kpi(items[0], query)
+        
+        # Multiple items - return as list
+        return {
+            "type": "list",
+            "data": {
+                "items": items,
+                "count": len(items)
+            },
+            "config": {},
+            "meta": {"original_type": "numpy.ndarray", "dtype": str(arr.dtype)}
+        }
+    
+    def _format_list(self, items: list, query: str = "") -> Dict[str, Any]:
+        """
+        Format plain Python list result.
+        """
+        # Handle empty list
+        if not items:
+            return {
+                "type": "list",
+                "data": {"items": []},
+                "config": {},
+                "meta": {"empty": True}
+            }
+        
+        # Single item list - might be KPI
+        if len(items) == 1:
+            if isinstance(items[0], (int, float)):
+                return self._format_kpi(items[0], query)
+            if isinstance(items[0], dict):
+                # Single dict - format as table with one row
+                return {
+                    "type": "table",
+                    "data": {
+                        "columns": list(items[0].keys()),
+                        "rows": items,
+                        "total_rows": 1
+                    },
+                    "config": {},
+                    "meta": {}
+                }
+        
+        # Check if list of dicts (table-like)
+        if all(isinstance(item, dict) for item in items):
+            # Extract columns from first dict
+            if items:
+                columns = list(items[0].keys())
+                return {
+                    "type": "table",
+                    "data": {
+                        "columns": columns,
+                        "rows": items[:100],  # Limit to 100 rows
+                        "total_rows": len(items)
+                    },
+                    "config": {"truncated": len(items) > 100},
+                    "meta": {}
+                }
+        
+        # Plain list of values
+        return {
+            "type": "list",
+            "data": {
+                "items": items[:100],  # Limit to 100 items
+                "count": len(items)
+            },
+            "config": {"truncated": len(items) > 100},
+            "meta": {}
+        }
+    
+    def _format_series(self, series: pd.Series, query: str = "") -> Dict[str, Any]:
+        """
+        Format pandas Series result.
+        Series can be:
+        - Single value (KPI)
+        - Multiple values with index (table)
+        - Named series (use name as column)
+        """
+        # Handle empty series
+        if series.empty:
+            return {
+                "type": "list",
+                "data": {"items": []},
+                "config": {},
+                "meta": {"empty": True, "original_type": "pandas.Series"}
+            }
+        
+        # Single value - return as KPI if numeric
+        if len(series) == 1:
+            value = series.iloc[0]
+            if isinstance(value, (int, float, np.number)):
+                return self._format_kpi(float(value), query)
+        
+        # Convert to DataFrame for consistent handling
+        df = series.reset_index()
+        
+        # Rename columns for clarity
+        if len(df.columns) == 2:
+            # Series with index becomes two columns
+            df.columns = ['index', series.name or 'value']
+        
+        return self._detect_dataframe_type(df, query, None)
     
     def _format_kpi(self, value: Union[int, float], query: str = "") -> Dict[str, Any]:
         """Format single number as KPI"""
@@ -74,7 +267,7 @@ class ResultTypeDetector:
         format_type = "number"
         if 'percent' in query_lower or 'rate' in query_lower or 'ratio' in query_lower:
             format_type = "percentage"
-        elif 'price' in query_lower or 'revenue' in query_lower or 'cost' in query_lower or 'amount' in query_lower:
+        elif 'price' in query_lower or 'revenue' in query_lower or 'cost' in query_lower or 'amount' in query_lower or 'salary' in query_lower:
             format_type = "currency"
         elif 'count' in query_lower:
             format_type = "integer"
@@ -87,7 +280,8 @@ class ResultTypeDetector:
             },
             "config": {
                 "format": format_type
-            }
+            },
+            "meta": {}
         }
     
     def _format_text(self, text: str) -> Dict[str, Any]:
@@ -95,7 +289,8 @@ class ResultTypeDetector:
         return {
             "type": "text",
             "data": {"value": text},
-            "config": {}
+            "config": {},
+            "meta": {}
         }
     
     def _detect_dataframe_type(
@@ -109,8 +304,13 @@ class ResultTypeDetector:
         if df.empty:
             return {
                 "type": "table",
-                "data": [],
-                "config": {"empty": True}
+                "data": {
+                    "columns": [],
+                    "rows": [],
+                    "total_rows": 0
+                },
+                "config": {"empty": True},
+                "meta": {}
             }
         
         # Single cell result → KPI
@@ -200,7 +400,8 @@ class ResultTypeDetector:
                 "x_axis": x_col,
                 "y_axis": y_col,
                 "title": f"{y_col} over {x_col}"
-            }
+            },
+            "meta": {}
         }
     
     def _format_bar_chart(
@@ -226,7 +427,8 @@ class ResultTypeDetector:
                 "x_axis": x_col,
                 "y_axis": y_col,
                 "title": f"{y_col} by {x_col}"
-            }
+            },
+            "meta": {}
         }
     
     def _format_pie_chart(
@@ -245,25 +447,45 @@ class ResultTypeDetector:
             "config": {
                 "chart_type": "pie",
                 "title": f"{value_col} by {label_col}"
-            }
+            },
+            "meta": {}
         }
     
     def _format_table(self, df: pd.DataFrame) -> Dict[str, Any]:
         """Format data as table"""
+        # Convert DataFrame to JSON-serializable format
+        # Handle datetime columns
+        df_copy = df.copy()
+        for col in df_copy.columns:
+            if pd.api.types.is_datetime64_any_dtype(df_copy[col]):
+                df_copy[col] = df_copy[col].astype(str)
+        
         # Limit to 100 rows
-        df_limited = df.head(100)
+        df_limited = df_copy.head(100)
+        
+        # Convert to records, handling NaN/None values
+        rows = df_limited.to_dict(orient='records')
+        
+        # Clean up NaN values for JSON serialization
+        for row in rows:
+            for key, value in row.items():
+                if pd.isna(value):
+                    row[key] = None
+                elif isinstance(value, (np.integer, np.floating)):
+                    row[key] = value.item()
         
         return {
             "type": "table",
             "data": {
                 "columns": df_limited.columns.tolist(),
-                "rows": df_limited.to_dict(orient='records'),
+                "rows": rows,
                 "total_rows": len(df)
             },
             "config": {
                 "truncated": len(df) > 100,
                 "original_row_count": len(df)
-            }
+            },
+            "meta": {}
         }
     
     def _format_number(self, value: Union[int, float], format_type: str) -> str:
