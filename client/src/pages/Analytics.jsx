@@ -12,7 +12,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../firebase';
-import { AnalyticsDashboard } from '../components/analytics';
+import { PowerBIDashboard } from '../components/analytics';
 import { apiPost } from '../lib/api';
 
 const Analytics = () => {
@@ -161,7 +161,7 @@ const Analytics = () => {
   }
 
   return (
-    <AnalyticsDashboard
+    <PowerBIDashboard
       dashboard={dashboard}
       isLoading={isLoading}
       onRefresh={handleRefresh}

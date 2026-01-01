@@ -22,6 +22,7 @@ class Settings:
     # API Keys
     groq_api_key: Optional[str]
     mongo_uri: Optional[str]
+    database_url: Optional[str]  # PostgreSQL or SQLite connection string
     
     # LLM Configuration
     llm_model: str
@@ -67,6 +68,7 @@ class Settings:
         # API Keys
         self.groq_api_key = os.getenv("GROQ_API_KEY")
         self.mongo_uri = os.getenv("MONGO_URI")
+        self.database_url = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/datacue")
         
         # LLM Configuration
         self.llm_model = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
@@ -116,6 +118,10 @@ class Settings:
     @property
     def has_mongo(self) -> bool:
         return bool(self.mongo_uri)
+
+    @property
+    def has_database(self) -> bool:
+        return bool(self.database_url)
 
 
 @lru_cache(maxsize=1)

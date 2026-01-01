@@ -1,109 +1,84 @@
 /**
- * AnalyticsDashboard - Power BI-style professional analytics dashboard
+ * AnalyticsDashboard - Professional dark dashboard like Power BI/Tableau
  * 
  * Features:
- * - Light professional theme matching Power BI/Tableau
- * - Smart auto-placement algorithm for optimal layout
- * - Compact KPI cards at top
- * - Responsive grid with different panel sizes
- * - Header with share and export options
+ * - Dark theme with cyan/teal accent colors
+ * - KPI cards with icons at top row
+ * - Smart auto-placement for optimal layout
+ * - Responsive grid system
  */
 
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardPanel from './DashboardPanel';
 import PanelRenderer from './PanelRenderer';
-import { FiRefreshCw, FiDownload, FiArrowLeft, FiShare2, FiMaximize2, FiSearch } from 'react-icons/fi';
+import KpiCard from './KpiCard';
+import { FiRefreshCw, FiDownload, FiArrowLeft, FiShare2, FiMaximize2 } from 'react-icons/fi';
 import { HiSparkles } from 'react-icons/hi2';
 
 /**
- * Smart layout calculator - determines optimal grid placement
+ * Smart layout calculator - Power BI style grid
  */
 function calculateSmartLayout(panels) {
-  const layoutPanels = [];
-  let currentRow = 0;
-  
   // Separate panel types
   const kpis = panels.filter(p => p.type?.toLowerCase() === 'kpi');
   const charts = panels.filter(p => p.type?.toLowerCase() !== 'kpi' && p.type?.toLowerCase() !== 'insights');
   const insights = panels.filter(p => p.type?.toLowerCase() === 'insights');
   
-  // Row 0: KPIs (compact, 3 columns each for up to 4 KPIs)
-  if (kpis.length > 0) {
-    const kpiWidth = Math.floor(12 / Math.min(kpis.length, 4));
-    kpis.slice(0, 4).forEach((kpi, i) => {
-      layoutPanels.push({
-        ...kpi,
-        gridLayout: { x: i * kpiWidth, y: 0, w: kpiWidth, h: 1 },
-        size: 'kpi'
-      });
-    });
-    currentRow = 1;
-  }
+  const layoutPanels = [];
   
-  // Smart chart placement - vary sizes for visual interest
+  // Chart sizing based on type
   const chartSizes = {
-    pie: { w: 4, h: 2, size: 'small' },
-    donut: { w: 4, h: 2, size: 'small' },
-    histogram: { w: 4, h: 2, size: 'medium' },
-    bar: { w: 6, h: 2, size: 'medium' },
-    grouped_bar: { w: 6, h: 2, size: 'medium' },
-    line: { w: 6, h: 2, size: 'medium' },
-    time_series: { w: 8, h: 2, size: 'large' },
-    scatter: { w: 6, h: 2, size: 'medium' },
-    scatter_plot: { w: 6, h: 2, size: 'medium' },
-    heatmap: { w: 6, h: 2, size: 'medium' },
-    table: { w: 12, h: 2, size: 'full' },
-    default: { w: 6, h: 2, size: 'medium' }
+    pie: { w: 4, h: 2 },
+    donut: { w: 4, h: 2 },
+    histogram: { w: 4, h: 2 },
+    bar: { w: 4, h: 2 },
+    grouped_bar: { w: 4, h: 2 },
+    line: { w: 4, h: 2 },
+    area: { w: 4, h: 2 },
+    time_series: { w: 6, h: 2 },
+    scatter: { w: 4, h: 2 },
+    heatmap: { w: 6, h: 2 },
+    table: { w: 6, h: 2 },
+    default: { w: 4, h: 2 }
   };
   
   let currentCol = 0;
-  let rowHeight = 2;
+  let currentRow = 0;
   
   charts.forEach((chart, index) => {
     const type = chart.type?.toLowerCase() || 'default';
-    const sizing = chartSizes[type] || chartSizes.default;
+    let { w, h } = chartSizes[type] || chartSizes.default;
     
-    // Vary first chart to be larger for impact
-    let { w, h, size } = sizing;
+    // First chart larger for visual impact
     if (index === 0 && charts.length > 2) {
-      w = 8;
-      h = 2;
-      size = 'large';
+      w = 6;
     }
     
     // Check if fits in current row
     if (currentCol + w > 12) {
       currentCol = 0;
-      currentRow += rowHeight;
+      currentRow += 2;
     }
     
     layoutPanels.push({
       ...chart,
       gridLayout: { x: currentCol, y: currentRow, w, h },
-      size
     });
     
     currentCol += w;
-    if (currentCol >= 12) {
-      currentCol = 0;
-      currentRow += rowHeight;
-    }
   });
   
-  // Add insights at bottom
+  // Add insights at bottom as full width
   if (insights.length > 0) {
-    if (currentCol !== 0) {
-      currentRow += rowHeight;
-    }
+    if (currentCol !== 0) currentRow += 2;
     layoutPanels.push({
       ...insights[0],
       gridLayout: { x: 0, y: currentRow, w: 12, h: 1 },
-      size: 'full'
     });
   }
   
-  return layoutPanels;
+  return { kpis, chartPanels: layoutPanels, insights };
 }
 
 const AnalyticsDashboard = ({
@@ -113,10 +88,9 @@ const AnalyticsDashboard = ({
   onExport,
 }) => {
   const navigate = useNavigate();
-  const [searchQuery, setSearchQuery] = useState('');
 
   // Parse and layout panels
-  const layoutPanels = useMemo(() => {
+  const { kpis, chartPanels, insights: panelInsights } = useMemo(() => {
     const rawPanels = dashboard?.panels || dashboard?.dashboard?.charts?.map((chart, index) => ({
       id: chart.id || chart.chart_id || `panel_${index}`,
       type: chart.type || chart.chart_type,
@@ -134,110 +108,82 @@ const AnalyticsDashboard = ({
     return calculateSmartLayout(rawPanels);
   }, [dashboard]);
 
-  // Get insights for separate display
+  // Get insights from dashboard
   const insights = dashboard?.rawInsights || [];
+  
+  // Dashboard title
+  const dashboardTitle = dashboard?.title || dashboard?.dashboard?.title || 'Sales Dashboard';
 
   if (isLoading) {
     return <LoadingState />;
   }
 
-  if (!dashboard || layoutPanels.length === 0) {
+  if (!dashboard || chartPanels.length === 0) {
     return <EmptyState onBack={() => navigate('/chat')} onRefresh={onRefresh} />;
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
+    <div className="min-h-screen bg-[#0d1117]">
       {/* Header Bar */}
-      <header className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-50">
-        <div className="px-4 py-2 flex items-center justify-between gap-4">
-          {/* Left: Navigation and Title */}
-          <div className="flex items-center gap-3 min-w-0">
+      <header className="bg-[#161b22] border-b border-gray-800/50 sticky top-0 z-50">
+        <div className="px-4 py-3 flex items-center justify-between">
+          {/* Left: Back + Title */}
+          <div className="flex items-center gap-4">
             <button
               onClick={() => navigate('/chat')}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors text-gray-600"
+              className="p-2 hover:bg-gray-800 rounded-lg transition-colors text-gray-400 hover:text-white"
             >
               <FiArrowLeft className="text-lg" />
             </button>
-            
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
-                <HiSparkles className="text-white text-sm" />
-              </div>
-              <div>
-                <h1 className="text-sm font-semibold text-gray-900 truncate max-w-xs">
-                  {dashboard?.title || dashboard?.dashboard?.title || 'Executive Dashboard'}
-                </h1>
-                <p className="text-xs text-gray-500">
-                  {layoutPanels.length} visualizations
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Center: Search */}
-          <div className="hidden md:flex flex-1 max-w-md mx-4">
-            <div className="relative w-full">
-              <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm" />
-              <input
-                type="text"
-                placeholder="Ask a question about this dashboard..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-              />
-            </div>
+            <h1 className="text-lg font-semibold text-white">{dashboardTitle}</h1>
           </div>
 
           {/* Right: Actions */}
-          <div className="flex items-center gap-1">
-            <button
-              onClick={onRefresh}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors text-gray-600"
-              title="Refresh"
-            >
+          <div className="flex items-center gap-2">
+            <button onClick={onRefresh} className="p-2 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-white" title="Refresh">
               <FiRefreshCw className="text-lg" />
             </button>
-            <button
-              onClick={onExport}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors text-gray-600"
-              title="Export"
-            >
+            <button onClick={onExport} className="p-2 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-white" title="Export">
               <FiDownload className="text-lg" />
             </button>
-            <button
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors text-gray-600"
-              title="Share"
-            >
+            <button className="p-2 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-white" title="Share">
               <FiShare2 className="text-lg" />
             </button>
-            <button
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors text-gray-600"
-              title="Fullscreen"
-            >
+            <button className="p-2 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-white" title="Fullscreen">
               <FiMaximize2 className="text-lg" />
             </button>
           </div>
         </div>
       </header>
 
-      {/* Dashboard Grid */}
-      <div className="p-3 md:p-4">
+      {/* Main Content */}
+      <div className="p-4">
+        {/* KPI Cards Row */}
+        {kpis.length > 0 && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            {kpis.slice(0, 4).map((kpi, index) => (
+              <KpiCard key={kpi.id || index} kpi={kpi} index={index} />
+            ))}
+          </div>
+        )}
+
+        {/* Charts Grid */}
         <div 
           className="grid gap-3"
           style={{
             gridTemplateColumns: 'repeat(12, 1fr)',
-            gridAutoRows: 'minmax(140px, auto)',
+            gridAutoRows: 'minmax(220px, auto)',
           }}
         >
-          {layoutPanels.map((panel) => (
+          {chartPanels.map((panel) => (
             <div
               key={panel.id}
               style={{
-                gridColumn: `span ${panel.gridLayout?.w || 6}`,
+                gridColumn: `span ${panel.gridLayout?.w || 4}`,
                 gridRow: `span ${panel.gridLayout?.h || 2}`,
               }}
             >
-              <DashboardPanel panel={panel} size={panel.size}>
+              <DashboardPanel panel={panel}>
                 <PanelRenderer panel={panel} />
               </DashboardPanel>
             </div>
@@ -246,16 +192,16 @@ const AnalyticsDashboard = ({
         
         {/* Insights Section */}
         {insights.length > 0 && (
-          <div className="mt-4 bg-white rounded-lg border border-gray-200 shadow-sm p-4">
-            <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <span className="w-1 h-4 bg-amber-500 rounded-full"></span>
+          <div className="mt-4 bg-[#161b22] rounded-lg border border-gray-800/50 p-4">
+            <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+              <HiSparkles className="text-amber-400" />
               Key Insights
             </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {insights.map((insight, index) => (
                 <div 
                   key={index}
-                  className="p-3 bg-amber-50 border border-amber-100 rounded-lg text-sm text-gray-700"
+                  className="p-3 bg-[#21262d] border border-gray-700/50 rounded-lg text-sm text-gray-300"
                 >
                   {insight}
                 </div>
@@ -269,43 +215,43 @@ const AnalyticsDashboard = ({
 };
 
 /**
- * Loading State
+ * Loading State - Dark Theme
  */
 const LoadingState = () => (
-  <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+  <div className="min-h-screen bg-[#1b1b1b] flex items-center justify-center">
     <div className="text-center">
-      <div className="w-12 h-12 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mx-auto mb-4" />
-      <p className="text-gray-600">Generating dashboard...</p>
+      <div className="w-12 h-12 border-4 border-gray-700 border-t-amber-500 rounded-full animate-spin mx-auto mb-4" />
+      <p className="text-gray-400">Generating dashboard...</p>
     </div>
   </div>
 );
 
 /**
- * Empty State
+ * Empty State - Dark Theme
  */
 const EmptyState = ({ onBack, onRefresh }) => {
   const navigate = useNavigate();
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+    <div className="min-h-screen bg-[#1b1b1b] flex items-center justify-center">
       <div className="text-center max-w-md p-8">
-        <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gray-200 flex items-center justify-center">
-          <HiSparkles className="text-3xl text-gray-400" />
+        <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-[#333333] flex items-center justify-center">
+          <HiSparkles className="text-3xl text-gray-500" />
         </div>
-        <h2 className="text-xl font-semibold text-gray-900 mb-2">No Dashboard Data</h2>
-        <p className="text-gray-500 text-sm mb-6">
+        <h2 className="text-xl font-semibold text-white mb-2">No Dashboard Data</h2>
+        <p className="text-gray-400 text-sm mb-6">
           Upload a dataset to automatically generate insights and visualizations.
         </p>
         <div className="flex gap-3 justify-center">
           <button
             onClick={() => navigate('/chat')}
-            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium"
+            className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors text-sm font-medium"
           >
             Go to Chat
           </button>
           {onRefresh && (
             <button
               onClick={onRefresh}
-              className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
+              className="px-4 py-2 bg-[#333333] border border-gray-600 text-gray-300 rounded-lg hover:bg-gray-700 transition-colors text-sm font-medium"
             >
               Retry
             </button>

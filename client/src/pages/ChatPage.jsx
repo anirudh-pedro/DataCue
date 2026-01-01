@@ -665,16 +665,7 @@ const ChatPage = () => {
           </div>
         )}
         
-        {/* Floating Dashboard Button */}
-        {hasDashboard && !isUploading && (
-          <button
-            onClick={handleViewDashboard}
-            className="absolute top-4 right-4 z-20 px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white rounded-lg font-medium transition-all duration-200 flex items-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105"
-          >
-            <HiSparkles className="text-lg" />
-            View Dashboard
-          </button>
-        )}
+        {/* Removed floating dashboard button - only show in message */}
         {messages.length === 0 ? (
           // Empty State - Centered Input
           <div className="flex-1 flex flex-col items-center justify-center px-4">

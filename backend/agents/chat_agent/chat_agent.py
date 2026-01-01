@@ -69,6 +69,15 @@ class ChatAgent:
             
             query_code = query_result["query"]
             
+            # Handle case where query is None (e.g., for ambiguous questions)
+            if query_code is None:
+                return {
+                    "status": "success",
+                    "answer": query_result.get("insight", "Could you please rephrase your question?"),
+                    "result": None,
+                    "result_type": "text"
+                }
+            
             # Step 2: Validate query is safe (blocks DELETE, UPDATE, DROP, etc.)
             validation = self.validator.validate(query_code)
             if not validation["valid"]:
@@ -121,6 +130,15 @@ class ChatAgent:
     def _generate_query(self, question: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
         """Generate pandas query from natural language"""
         
+        # Handle short/ambiguous questions
+        short_responses = ['yes', 'no', 'ok', 'sure', 'okay', 'yeah', 'yep', 'nope', 'y', 'n']
+        if question.strip().lower() in short_responses:
+            return {
+                "success": True,
+                "query": None,
+                "insight": "I need more context. Could you please ask a specific question about your data? For example: 'What is the total revenue?' or 'Show me sales by region'."
+            }
+        
         columns_info = []
         for col in metadata.get("columns", []):
             columns_info.append(f"- {col['name']} ({col['type']})")
@@ -141,12 +159,14 @@ Rules:
 5. For single values (sum, count, mean): just return the value, e.g. df['revenue'].sum()
 6. For grouped data: use .reset_index(), e.g. df.groupby('region')['revenue'].sum().reset_index()
 7. For row counts: use len(df) or df.shape[0]
+8. For "top N" queries: use .nlargest(N, 'column') or .head(N) after sorting
 
 Examples:
 - Total of column: df['revenue'].sum()
 - Average of column: df['age'].mean()
 - Count of rows: len(df)
 - Grouped sum: df.groupby('region')['revenue'].sum().reset_index()
+- Top 5 by revenue: df.nlargest(5, 'revenue')
 - Filter and count: len(df[df['region'] == 'North'])
 
 Respond with ONLY valid JSON:

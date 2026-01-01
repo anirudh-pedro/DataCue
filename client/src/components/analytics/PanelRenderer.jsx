@@ -20,30 +20,30 @@ import KpiPanel from './KpiPanel';
 import DataTable from './DataTable';
 import InsightsPanel from './InsightsPanel';
 
-// Professional LIGHT theme config for Plotly charts (Power BI style)
+// Professional DARK theme config for Plotly charts (Power BI style)
 const CHART_THEME = {
   paper_bgcolor: 'transparent',
   plot_bgcolor: 'transparent',
   font: {
     family: 'Segoe UI, Inter, -apple-system, BlinkMacSystemFont, Roboto, sans-serif',
-    color: '#374151',
+    color: '#e5e7eb',
     size: 11,
   },
   margin: { t: 10, r: 15, b: 40, l: 50 },
   xaxis: {
-    gridcolor: 'rgba(229, 231, 235, 0.8)',
-    zerolinecolor: 'rgba(209, 213, 219, 0.8)',
-    tickfont: { size: 10, color: '#6b7280' },
-    title: { font: { size: 11, color: '#374151' } },
-    linecolor: '#e5e7eb',
+    gridcolor: 'rgba(75, 85, 99, 0.4)',
+    zerolinecolor: 'rgba(107, 114, 128, 0.5)',
+    tickfont: { size: 10, color: '#9ca3af' },
+    title: { font: { size: 11, color: '#d1d5db' } },
+    linecolor: '#4b5563',
     showgrid: true,
   },
   yaxis: {
-    gridcolor: 'rgba(229, 231, 235, 0.8)',
-    zerolinecolor: 'rgba(209, 213, 219, 0.8)',
-    tickfont: { size: 10, color: '#6b7280' },
-    title: { font: { size: 11, color: '#374151' } },
-    linecolor: '#e5e7eb',
+    gridcolor: 'rgba(75, 85, 99, 0.4)',
+    zerolinecolor: 'rgba(107, 114, 128, 0.5)',
+    tickfont: { size: 10, color: '#9ca3af' },
+    title: { font: { size: 11, color: '#d1d5db' } },
+    linecolor: '#4b5563',
     showgrid: true,
   },
   // Power BI-inspired color palette
@@ -62,21 +62,21 @@ const CHART_THEME = {
     '#4E8542', // Forest
   ],
   hoverlabel: {
-    bgcolor: '#ffffff',
-    bordercolor: '#e5e7eb',
-    font: { color: '#111827', size: 12, family: 'Segoe UI, sans-serif' },
+    bgcolor: '#1f2937',
+    bordercolor: '#4b5563',
+    font: { color: '#f3f4f6', size: 12, family: 'Segoe UI, sans-serif' },
   },
   legend: {
-    font: { color: '#374151', size: 10 },
-    bgcolor: 'rgba(255,255,255,0.9)',
-    bordercolor: '#e5e7eb',
+    font: { color: '#d1d5db', size: 10 },
+    bgcolor: 'rgba(31, 41, 55, 0.9)',
+    bordercolor: '#4b5563',
     borderwidth: 1,
     orientation: 'h',
     y: -0.15,
   },
   modebar: {
     bgcolor: 'transparent',
-    color: '#9ca3af',
+    color: '#6b7280',
     activecolor: '#118DFF',
   },
 };
@@ -212,15 +212,15 @@ function buildBarChart(data, xKey, yKey) {
       x: data.map(d => d[x]),
       y: data.map(d => d[y]),
       marker: {
-        color: '#6366f1',
-        line: { color: '#818cf8', width: 1 },
+        color: '#118DFF',
+        line: { color: 'rgba(255,255,255,0.1)', width: 0.5 },
       },
       hovertemplate: `<b>%{x}</b><br>${y}: %{y:,.0f}<extra></extra>`,
     }],
     layout: {
       xaxis: { title: { text: x, standoff: 10 } },
       yaxis: { title: { text: y, standoff: 10 } },
-      bargap: 0.3,
+      bargap: 0.25,
     },
   };
 }
@@ -233,13 +233,12 @@ function buildLineChart(data, xKey, yKey) {
   return {
     traces: [{
       type: 'scatter',
-      mode: 'lines+markers',
+      mode: 'lines',
       x: data.map(d => d[x]),
       y: data.map(d => d[y]),
-      line: { color: '#8b5cf6', width: 2, shape: 'spline' },
-      marker: { color: '#a855f7', size: 6 },
+      line: { color: '#12B5CB', width: 2.5, shape: 'spline' },
       fill: 'tozeroy',
-      fillcolor: 'rgba(139, 92, 246, 0.1)',
+      fillcolor: 'rgba(18, 181, 203, 0.2)',
       hovertemplate: `<b>%{x}</b><br>${y}: %{y:,.2f}<extra></extra>`,
     }],
     layout: {
@@ -254,30 +253,36 @@ function buildPieChart(data, labelKey, valueKey) {
   const label = labelKey || keys[0];
   const value = valueKey || keys[1] || 'count';
 
+  // Power BI-style pie colors
+  const pieColors = ['#118DFF', '#12B5CB', '#E66C37', '#B845A7', '#744EC2', '#D9B300'];
+
   return {
     traces: [{
       type: 'pie',
       labels: data.map(d => d[label]),
       values: data.map(d => d[value] || d.count || 1),
-      hole: 0.4,
+      hole: 0.55, // Larger hole for donut effect like Power BI
       marker: {
-        line: { color: '#0f172a', width: 2 },
+        colors: pieColors,
+        line: { color: '#0d1117', width: 2 },
       },
       textposition: 'inside',
       textinfo: 'percent',
-      textfont: { size: 11, color: '#fff' },
+      textfont: { size: 12, color: '#fff', family: 'Segoe UI, sans-serif' },
       hovertemplate: '<b>%{label}</b><br>%{value:,.0f} (%{percent})<extra></extra>',
+      pull: 0.02,
     }],
     layout: {
       showlegend: true,
       legend: {
         orientation: 'h',
-        y: -0.1,
+        y: -0.15,
         x: 0.5,
         xanchor: 'center',
-        font: { size: 10 },
+        font: { size: 10, color: '#9ca3af' },
+        bgcolor: 'transparent',
       },
-      margin: { t: 10, r: 10, b: 30, l: 10 },
+      margin: { t: 10, r: 10, b: 40, l: 10 },
     },
   };
 }

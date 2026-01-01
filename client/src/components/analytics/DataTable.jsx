@@ -48,23 +48,23 @@ const DataTable = ({ data, maxRows = 50 }) => {
 
   if (!columns.length) {
     return (
-      <div className="h-full flex items-center justify-center text-gray-400 text-sm">
+      <div className="h-full flex items-center justify-center text-gray-500 text-sm">
         No data available
       </div>
     );
   }
 
   return (
-    <div className="h-full overflow-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent">
+    <div className="h-full overflow-auto scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-transparent">
       <table className="w-full text-sm border-collapse">
         <thead className="sticky top-0 z-10">
-          <tr className="bg-gray-50">
+          <tr className="bg-[#333333]">
             {columns.map((col, index) => (
               <th
                 key={col}
                 className={`
                   px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider
-                  text-gray-600 border-b border-gray-200
+                  text-gray-300 border-b border-gray-600
                   ${index === 0 ? '' : ''}
                   ${index === columns.length - 1 ? '' : ''}
                 `}
@@ -79,16 +79,16 @@ const DataTable = ({ data, maxRows = 50 }) => {
             <tr
               key={rowIndex}
               className={`
-                border-b border-gray-100
+                border-b border-gray-700/50
                 transition-colors duration-150
-                hover:bg-blue-50
-                ${rowIndex % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}
+                hover:bg-gray-700/50
+                ${rowIndex % 2 === 0 ? 'bg-transparent' : 'bg-gray-800/30'}
               `}
             >
               {columns.map((col) => (
                 <td
                   key={col}
-                  className="px-3 py-2 text-gray-700 whitespace-nowrap"
+                  className="px-3 py-2 text-gray-300 whitespace-nowrap"
                 >
                   {formatCell(row[col])}
                 </td>
@@ -100,7 +100,7 @@ const DataTable = ({ data, maxRows = 50 }) => {
 
       {/* Show row count if truncated */}
       {data && data.length > maxRows && (
-        <div className="sticky bottom-0 py-2 px-3 text-xs text-slate-500 bg-slate-900/90 backdrop-blur-sm border-t border-slate-800/50">
+        <div className="sticky bottom-0 py-2 px-3 text-xs text-gray-400 bg-[#252525]/95 backdrop-blur-sm border-t border-gray-700/50">
           Showing {maxRows} of {data.length} rows
         </div>
       )}

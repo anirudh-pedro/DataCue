@@ -103,14 +103,14 @@ const KpiPanel = ({ panel }) => {
     `}>
       {/* Title */}
       {panel.title && (
-        <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
+        <div className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-1">
           {panel.title}
         </div>
       )}
       
       {/* Primary Value */}
       <div className={`
-        font-bold text-gray-900 leading-none
+        font-bold text-white leading-none
         ${isCompact ? 'text-2xl md:text-3xl' : 'text-4xl mb-2'}
       `}>
         {formatNumber(kpiData.value, {
@@ -131,7 +131,7 @@ const KpiPanel = ({ panel }) => {
 
       {/* Previous Value or Subtitle */}
       {(kpiData.previousValue || panel.subtitle) && (
-        <div className="text-xs text-gray-500 mt-1">
+        <div className="text-xs text-gray-400 mt-1">
           {kpiData.previousValue 
             ? `vs ${formatNumber(kpiData.previousValue, { compact: true })} previous`
             : panel.subtitle

@@ -5,7 +5,7 @@ import pandas as pd
 
 from agents.chat_agent import ChatAgent
 from services.dataset_service import get_dataset_service
-from core.gridfs_service import get_gridfs_service
+
 
 
 class ChatQueryService:
@@ -53,9 +53,21 @@ class ChatQueryService:
                 }
             df = pd.DataFrame(rows)
         elif gridfs_id:
-            gridfs_service = get_gridfs_service()
-            file_stream = gridfs_service.get_file_stream(gridfs_id)
-            df = pd.read_csv(file_stream)
+            # gridfs_id is now an alias for file_id in the new system
+            from core.file_service import get_file_service
+            file_service = get_file_service()
+            
+            # Retrieve file content directly
+            file_data = file_service.get_file(gridfs_id)
+            if file_data and file_data.get('content'):
+                from io import BytesIO
+                file_stream = BytesIO(file_data['content'])
+                df = pd.read_csv(file_stream)
+            else:
+                return {
+                    "status": "error",
+                    "message": "File not found"
+                }
         else:
             return {
                 "status": "error",

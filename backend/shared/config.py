@@ -21,8 +21,16 @@ class AppConfig:
         return self._settings.mongo_uri
 
     @property
+    def database_url(self) -> Optional[str]:
+        return self._settings.database_url
+
+    @property
     def has_mongo(self) -> bool:
         return self._settings.has_mongo
+
+    @property
+    def has_database(self) -> bool:
+        return self._settings.has_database
 
     @property
     def has_groq(self) -> bool:
@@ -32,3 +40,4 @@ class AppConfig:
 @lru_cache(maxsize=1)
 def get_config() -> AppConfig:
     return AppConfig(_get_core_settings())
+

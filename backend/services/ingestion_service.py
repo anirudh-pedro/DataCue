@@ -7,7 +7,7 @@ import pandas as pd
 from agents.file_ingestion_agent import FileIngestionAgent
 from shared.storage import save_dataset, dataset_path
 from shared.utils import slugify
-from core.gridfs_service import get_gridfs_service
+from core.file_service import get_file_service
 from services.dataset_service import get_dataset_service
 
 
@@ -16,7 +16,6 @@ class IngestionService:
     
     def __init__(self) -> None:
         self._agent = FileIngestionAgent()
-        self._dataset_service = get_dataset_service()
 
     def ingest_file(
         self, 
@@ -45,11 +44,13 @@ class IngestionService:
         save_dataset(dataset_name, content)
         path = dataset_path(dataset_name)
         
-        # Save to GridFS for persistence
-        gridfs_service = get_gridfs_service()
-        gridfs_id = gridfs_service.save_file(
+        # Save to FileService for persistence
+        file_service = get_file_service()
+        file_id = file_service.save_file(
             filename=f"{dataset_name}.csv",
             content=content,
+            session_id=session_id,
+            content_type="text/csv",
             metadata={
                 "original_filename": filename,
                 "dataset_name": dataset_name
@@ -64,17 +65,19 @@ class IngestionService:
         
         # Add identifiers
         result["dataset_name"] = dataset_name
-        result["gridfs_id"] = gridfs_id
+        result["file_id"] = file_id
+        result["gridfs_id"] = file_id  # Alias for frontend compatibility
         
-        # Store in MongoDB if enabled
+        # Store in PostgreSQL
         data = result.get("data", [])
-        if data and self._dataset_service.is_enabled:
+        dataset_service = get_dataset_service()
+        if data and dataset_service.is_enabled:
             try:
                 dataframe = pd.DataFrame(data)
-                dataset_id = str(uuid.uuid4())
+                dataset_id = uuid.uuid4().hex
                 effective_session_id = session_id or dataset_id
                 
-                store_result = self._dataset_service.store_dataset(
+                store_result = dataset_service.store_dataset(
                     session_id=effective_session_id,
                     dataset_id=dataset_id,
                     dataset_name=dataset_name,

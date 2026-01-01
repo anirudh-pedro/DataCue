@@ -1,280 +1,192 @@
-"""MongoDB-backed dataset row storage for Groq query execution."""
+"""PostgreSQL-backed dataset storage for query execution."""
+
 from __future__ import annotations
 
 import logging
-import re
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 import pandas as pd
-from pymongo import MongoClient
-from pymongo.collection import Collection
+from sqlalchemy import desc, func
 
-from core.config import get_settings
+from core.database import get_db_session
+from core.models import Dataset, DatasetRow
 
 LOGGER = logging.getLogger(__name__)
 
 
 class DatasetService:
-    """Store and query dataset rows in MongoDB."""
+    """Store and query dataset rows in PostgreSQL."""
 
     def __init__(self) -> None:
-        self._settings = get_settings()
-        self._client: Optional[MongoClient] = None
-        self._collection: Optional[Collection] = None
-        self._datasets_meta: Optional[Collection] = None
-        
-        if self._settings.has_mongo:
-            try:
-                self._client = MongoClient(self._settings.mongo_uri)
-                db = self._client.get_database()
-                self._collection = db["session_dataset_rows"]
-                self._datasets_meta = db["session_datasets_meta"]
-                
-                # Create indexes for efficient querying (check before creating)
-                self._ensure_indexes()
-                
-                LOGGER.info("DatasetService initialized with MongoDB")
-            except Exception as exc:
-                LOGGER.error("Failed to initialize MongoDB for DatasetService: %s", exc)
-                self._client = None
-        else:
-            LOGGER.info("DatasetService disabled (no MONGO_URI configured)")
-
-    def _ensure_indexes(self) -> None:
-        """Create indexes if they don't already exist (check by key pattern)."""
-        if self._collection is None or self._datasets_meta is None:
-            return
-        
-        def has_index_with_keys(indexes: dict, keys: list) -> bool:
-            """Check if an index with the given keys already exists."""
-            target_key = dict(keys)
-            for idx_info in indexes.values():
-                if idx_info.get("key") == list(target_key.items()):
-                    return True
-            return False
-        
-        # Check existing indexes for session_dataset_rows collection
-        existing_row_indexes = self._collection.index_information()
-        
-        if not has_index_with_keys(existing_row_indexes, [("session_id", 1), ("dataset_id", 1)]):
-            try:
-                self._collection.create_index(
-                    [("session_id", 1), ("dataset_id", 1)],
-                    name="session_dataset_idx"
-                )
-            except Exception:
-                pass  # Index exists with different name
-        
-        if not has_index_with_keys(existing_row_indexes, [("dataset_id", 1)]):
-            try:
-                self._collection.create_index(
-                    [("dataset_id", 1)],
-                    name="dataset_id_idx"
-                )
-            except Exception:
-                pass
-        
-        # Check existing indexes for session_datasets_meta collection
-        existing_meta_indexes = self._datasets_meta.index_information()
-        
-        if not has_index_with_keys(existing_meta_indexes, [("session_id", 1)]):
-            try:
-                self._datasets_meta.create_index(
-                    [("session_id", 1)],
-                    name="session_id_idx"
-                )
-            except Exception:
-                pass
-        
-        if not has_index_with_keys(existing_meta_indexes, [("session_id", 1), ("dataset_id", 1)]):
-            try:
-                self._datasets_meta.create_index(
-                    [("session_id", 1), ("dataset_id", 1)],
-                    name="session_dataset_meta_idx"
-                )
-            except Exception:
-                pass
-        
-        if not has_index_with_keys(existing_meta_indexes, [("session_id", 1), ("created_at", -1)]):
-            try:
-                self._datasets_meta.create_index(
-                    [("session_id", 1), ("created_at", -1)],
-                    name="session_created_idx"
-                )
-            except Exception:
-                pass
+        LOGGER.info("DatasetService initialized with PostgreSQL")
 
     @property
     def is_enabled(self) -> bool:
-        """Check if MongoDB storage is available."""
-        return self._client is not None and self._collection is not None
+        """Check if database storage is available."""
+        return True  # Always enabled with SQLAlchemy
 
     def store_dataset(
         self,
         *,
         session_id: str,
-        dataset_id: str,
+        dataset_id: Optional[str] = None,
         dataset_name: str,
         dataframe: pd.DataFrame,
         metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Store cleaned dataset rows in MongoDB with sanitized column names."""
-        if not self.is_enabled:
-            return {"success": False, "error": "MongoDB storage not configured"}
-
-        # Sanitize column names for MongoDB (no $, ., or starting with numbers)
-        column_map = {}
-        sanitized_columns = []
-        
-        for col in dataframe.columns:
-            sanitized = self._sanitize_column_name(col)
-            column_map[col] = sanitized
-            sanitized_columns.append(sanitized)
-        
-        # Rename dataframe columns
-        df_sanitized = dataframe.rename(columns=column_map)
-        
-        # Convert to documents
-        documents = []
-        for idx, row in df_sanitized.iterrows():
-            doc = {
-                "session_id": session_id,
-                "dataset_id": dataset_id,
-                "row_index": int(idx),
-            }
-            # Add each column value
-            for col in sanitized_columns:
-                value = row[col]
-                # Convert numpy/pandas types to Python native types
-                if pd.isna(value):
-                    doc[col] = None
-                elif isinstance(value, (pd.Timestamp, pd.DatetimeTZDtype)):
-                    doc[col] = value.isoformat() if hasattr(value, 'isoformat') else str(value)
-                else:
-                    doc[col] = self._convert_to_native_type(value)
-            
-            documents.append(doc)
+        """Store cleaned dataset rows in PostgreSQL."""
+        if dataset_id is None:
+            dataset_id = uuid4().hex
         
         try:
-            # Clear any existing data previously associated with this session
-            self._collection.delete_many({
-                "session_id": session_id
-            })
-            self._datasets_meta.delete_many({"session_id": session_id})
-            
-            # Insert new documents
-            if documents:
-                self._collection.insert_many(documents)
-            
-            # Store metadata
-            from datetime import datetime, timezone
-            
-            meta_doc = {
-                "session_id": session_id,
-                "dataset_id": dataset_id,
-                "dataset_name": dataset_name,
-                "user_id": user_id,  # Owner of this dataset (OTP authenticated)
-                "row_count": len(documents),
-                "column_map": column_map,  # original -> sanitized mapping
-                "columns": list(column_map.values()),  # sanitized column names
-                "column_types": {col: str(dataframe[orig_col].dtype) for orig_col, col in column_map.items()},
-                "metadata": metadata or {},
-                "created_at": datetime.now(timezone.utc),
-            }
-            
-            self._datasets_meta.insert_one(meta_doc)
-            
-            LOGGER.info(
-                "Stored %d rows for session=%s dataset=%s",
-                len(documents), session_id, dataset_id
-            )
-            
-            return {
-                "success": True,
-                "rows_stored": len(documents),
-                "columns": len(sanitized_columns),
-                "column_map": column_map,
-            }
-            
-        except Exception as exc:
-            LOGGER.exception("Failed to store dataset rows: %s", exc)
-            return {"success": False, "error": str(exc)}
-
-    def verify_ownership(self, session_id: str, user_id: str, dataset_id: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Verify that a user owns a dataset.
-        
-        Args:
-            session_id: Session identifier
-            user_id: User ID to verify ownership against
-            dataset_id: Optional specific dataset ID
-            
-        Returns:
-            {"authorized": bool, "reason": str or None}
-        """
-        if not self.is_enabled:
-            # If MongoDB not enabled, allow access (local mode)
-            return {"authorized": True, "reason": "MongoDB not configured"}
-        
-        try:
-            query: Dict[str, Any] = {"session_id": session_id}
-            if dataset_id:
-                query["dataset_id"] = dataset_id
-            
-            doc = self._datasets_meta.find_one(query)
-            
-            if not doc:
-                return {"authorized": False, "reason": "Dataset not found"}
-            
-            # Check if user_id is set and matches
-            owner_id = doc.get("user_id")
-            if owner_id is None:
-                # Legacy dataset without user_id - update with current user and allow
-                LOGGER.info(f"Updating legacy dataset {session_id} with user_id {user_id}")
-                self._datasets_meta.update_one(
-                    {"session_id": session_id},
-                    {"$set": {"user_id": user_id}}
+            with get_db_session() as db:
+                # Clear any existing data for this session
+                existing_datasets = db.query(Dataset).filter(
+                    Dataset.session_id == session_id
+                ).all()
+                
+                for ds in existing_datasets:
+                    db.delete(ds)
+                
+                # Flush to ensure cascade deletes are complete
+                db.flush()
+                
+                # Build column info
+                columns_info = []
+                column_types = {}
+                
+                for col in dataframe.columns:
+                    dtype = str(dataframe[col].dtype)
+                    col_type = "numeric" if pd.api.types.is_numeric_dtype(dataframe[col]) else "categorical"
+                    
+                    columns_info.append({
+                        "name": col,
+                        "type": col_type,
+                        "dtype": dtype,
+                    })
+                    column_types[col] = dtype
+                
+                # Create dataset metadata
+                dataset = Dataset(
+                    id=dataset_id,
+                    session_id=session_id,
+                    user_id=user_id,
+                    name=dataset_name,
+                    row_count=len(dataframe),
+                    columns=columns_info,
+                    column_types=column_types,
+                    metadata_=metadata or {},
                 )
-                return {"authorized": True, "reason": "Legacy dataset (ownership assigned)"}
-            
-            if owner_id == user_id:
-                return {"authorized": True, "reason": None}
-            else:
-                LOGGER.warning(f"Ownership mismatch: dataset owned by {owner_id[:8]}... but accessed by {user_id[:8]}...")
-                return {"authorized": False, "reason": "User does not own this dataset"}
+                db.add(dataset)
+                
+                # Store rows in batches
+                batch_size = 1000
+                rows_stored = 0
+                
+                for start_idx in range(0, len(dataframe), batch_size):
+                    end_idx = min(start_idx + batch_size, len(dataframe))
+                    batch_df = dataframe.iloc[start_idx:end_idx]
+                    
+                    for idx, row in batch_df.iterrows():
+                        # Convert row to dict with native Python types
+                        row_data = {}
+                        for col in dataframe.columns:
+                            value = row[col]
+                            if pd.isna(value):
+                                row_data[col] = None
+                            elif hasattr(value, 'item'):  # numpy type
+                                row_data[col] = value.item()
+                            elif hasattr(value, 'isoformat'):  # datetime
+                                row_data[col] = value.isoformat()
+                            else:
+                                row_data[col] = value
+                        
+                        dataset_row = DatasetRow(
+                            dataset_id=dataset_id,
+                            row_index=int(idx),
+                            data=row_data,
+                        )
+                        db.add(dataset_row)
+                        rows_stored += 1
+                    
+                    # Flush batch
+                    db.flush()
+                
+                LOGGER.info(
+                    f"Stored {rows_stored} rows for session={session_id} dataset={dataset_id}"
+                )
+                
+                return {
+                    "success": True,
+                    "rows_stored": rows_stored,
+                    "columns": len(dataframe.columns),
+                    "dataset_id": dataset_id,
+                }
                 
         except Exception as exc:
-            LOGGER.error("Failed to verify dataset ownership: %s", exc)
+            LOGGER.exception(f"Failed to store dataset rows: {exc}")
+            return {"success": False, "error": str(exc)}
+
+    def verify_ownership(
+        self, 
+        session_id: str, 
+        user_id: str, 
+        dataset_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Verify that a user owns a dataset."""
+        try:
+            with get_db_session() as db:
+                query = db.query(Dataset).filter(Dataset.session_id == session_id)
+                if dataset_id:
+                    query = query.filter(Dataset.id == dataset_id)
+                
+                dataset = query.first()
+                
+                if not dataset:
+                    return {"authorized": False, "reason": "Dataset not found"}
+                
+                # Check ownership
+                if dataset.user_id is None:
+                    # Legacy dataset - assign ownership
+                    dataset.user_id = user_id
+                    LOGGER.info(f"Assigned ownership of dataset {session_id} to {user_id}")
+                    return {"authorized": True, "reason": "Legacy dataset (ownership assigned)"}
+                
+                if dataset.user_id == user_id:
+                    return {"authorized": True, "reason": None}
+                else:
+                    return {"authorized": False, "reason": "User does not own this dataset"}
+                    
+        except Exception as exc:
+            LOGGER.error(f"Failed to verify dataset ownership: {exc}")
             return {"authorized": False, "reason": f"Verification error: {str(exc)}"}
 
-    def get_session_dataset(self, session_id: str, dataset_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Retrieve dataset metadata for a session.
-
-        Args:
-            session_id: Chat/session identifier used when storing the dataset.
-            dataset_id: Optional explicit dataset identifier to look up.
-        """
-        if not self.is_enabled:
-            return None
-        
+    def get_session_dataset(
+        self, 
+        session_id: str, 
+        dataset_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Retrieve dataset metadata for a session."""
         try:
-            query: Dict[str, Any] = {"session_id": session_id}
-            if dataset_id:
-                query["dataset_id"] = dataset_id
-
-            doc = self._datasets_meta.find_one(
-                query,
-                sort=[("created_at", -1)]  # Sort by creation time descending
-            )
-            if doc:
-                doc.pop("_id", None)
-                LOGGER.info(f"Found dataset for session {session_id}: {doc.get('dataset_id')}")
-            else:
-                LOGGER.warning(f"No dataset found for session: {session_id}")
-            return doc
+            with get_db_session() as db:
+                query = db.query(Dataset).filter(Dataset.session_id == session_id)
+                if dataset_id:
+                    query = query.filter(Dataset.id == dataset_id)
+                
+                dataset = query.order_by(desc(Dataset.created_at)).first()
+                
+                if not dataset:
+                    LOGGER.warning(f"No dataset found for session: {session_id}")
+                    return None
+                
+                LOGGER.info(f"Found dataset for session {session_id}: {dataset.id}")
+                return dataset.to_dict()
+                
         except Exception as exc:
-            LOGGER.error("Failed to fetch dataset metadata: %s", exc)
+            LOGGER.error(f"Failed to fetch dataset metadata: {exc}")
             return None
 
     def get_all_rows(
@@ -283,22 +195,9 @@ class DatasetService:
         dataset_id: Optional[str] = None,
         limit: int = 10000
     ) -> List[Dict[str, Any]]:
-        """
-        Get all rows from a dataset (with optional limit).
-        
-        Args:
-            session_id: Session ID
-            dataset_id: Optional dataset ID (uses latest if not provided)
-            limit: Maximum rows to return (default 10000)
-            
-        Returns:
-            List of row documents
-        """
-        if not self.is_enabled:
-            return []
-        
+        """Get all rows from a dataset."""
         try:
-            # If no dataset_id, get the latest dataset for this session
+            # Get dataset ID if not provided
             if not dataset_id:
                 meta = self.get_session_dataset(session_id)
                 if meta:
@@ -306,124 +205,142 @@ class DatasetService:
                 else:
                     return []
             
-            query: Dict[str, Any] = {
-                "session_id": session_id,
-                "dataset_id": dataset_id
-            }
-            
-            cursor = self._collection.find(
-                query,
-                {"_id": 0, "session_id": 0, "dataset_id": 0, "_row_index": 0}
-            ).limit(limit)
-            
-            return list(cursor)
+            with get_db_session() as db:
+                rows = db.query(DatasetRow).filter(
+                    DatasetRow.dataset_id == dataset_id
+                ).order_by(DatasetRow.row_index).limit(limit).all()
+                
+                return [row.data for row in rows]
+                
         except Exception as exc:
-            LOGGER.error("Failed to fetch all rows: %s", exc)
+            LOGGER.error(f"Failed to fetch all rows: {exc}")
             return []
 
-    def get_sample_rows(self, *, dataset_id: str, session_id: Optional[str] = None, limit: int = 5) -> List[Dict[str, Any]]:
+    def get_sample_rows(
+        self, 
+        *, 
+        dataset_id: str, 
+        session_id: Optional[str] = None, 
+        limit: int = 5
+    ) -> List[Dict[str, Any]]:
         """Get sample rows from a dataset."""
-        if not self.is_enabled:
-            return []
-        
         try:
-            query: Dict[str, Any] = {"dataset_id": dataset_id}
-            if session_id:
-                query["session_id"] = session_id
-            cursor = self._collection.find(
-                query,
-                {"_id": 0}
-            ).limit(limit)
-            
-            return list(cursor)
+            with get_db_session() as db:
+                rows = db.query(DatasetRow).filter(
+                    DatasetRow.dataset_id == dataset_id
+                ).limit(limit).all()
+                
+                return [row.data for row in rows]
+                
         except Exception as exc:
-            LOGGER.error("Failed to fetch sample rows: %s", exc)
+            LOGGER.error(f"Failed to fetch sample rows: {exc}")
             return []
-
-    def run_pipeline(self, session_id: str, dataset_id: str, pipeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Execute a MongoDB aggregation pipeline scoped to a session/dataset."""
-        if not self.is_enabled:
-            raise RuntimeError("MongoDB not configured")
-        
-        try:
-            secured_pipeline = self._ensure_security_filters(pipeline, session_id=session_id, dataset_id=dataset_id)
-            cursor = self._collection.aggregate(secured_pipeline)
-            results = list(cursor)
-            
-            # Remove MongoDB _id fields
-            for doc in results:
-                doc.pop("_id", None)
-            
-            return results
-        except Exception as exc:
-            LOGGER.exception("Pipeline execution failed: %s", exc)
-            raise
 
     def clear_session_data(self, session_id: str) -> Dict[str, Any]:
         """Delete all dataset rows and metadata for a session."""
-        if not self.is_enabled:
-            return {"success": False, "error": "MongoDB not configured"}
-        
         try:
-            rows_deleted = self._collection.delete_many({"session_id": session_id}).deleted_count
-            meta_deleted = self._datasets_meta.delete_one({"session_id": session_id}).deleted_count
-            
-            return {
-                "success": True,
-                "rows_deleted": rows_deleted,
-                "metadata_deleted": meta_deleted > 0,
-            }
+            with get_db_session() as db:
+                datasets = db.query(Dataset).filter(
+                    Dataset.session_id == session_id
+                ).all()
+                
+                rows_deleted = 0
+                for dataset in datasets:
+                    row_count = db.query(DatasetRow).filter(
+                        DatasetRow.dataset_id == dataset.id
+                    ).delete()
+                    rows_deleted += row_count
+                    db.delete(dataset)
+                
+                return {
+                    "success": True,
+                    "rows_deleted": rows_deleted,
+                    "datasets_deleted": len(datasets),
+                }
+                
         except Exception as exc:
-            LOGGER.error("Failed to clear session data: %s", exc)
+            LOGGER.error(f"Failed to clear session data: {exc}")
             return {"success": False, "error": str(exc)}
 
-    @staticmethod
-    def _sanitize_column_name(name: str) -> str:
-        """Sanitize column name for MongoDB field names."""
-        # Replace problematic characters
-        sanitized = re.sub(r'[^\w]', '_', str(name))
-        
-        # Ensure doesn't start with number or $
-        if sanitized and (sanitized[0].isdigit() or sanitized[0] == '$'):
-            sanitized = f"col_{sanitized}"
-        
-        # Ensure not empty
-        if not sanitized:
-            sanitized = "column"
-        
-        return sanitized.lower()
-
-    @staticmethod
-    def _convert_to_native_type(value: Any) -> Any:
-        """Convert pandas/numpy types to Python native types."""
-        if hasattr(value, 'item'):  # numpy types
-            return value.item()
-        if isinstance(value, (list, dict)):
-            return value
-        return value
-
-    @staticmethod
-    def _ensure_security_filters(
-        pipeline: List[Dict[str, Any]],
-        *,
-        session_id: str,
-        dataset_id: str,
+    def run_aggregation(
+        self, 
+        session_id: str, 
+        dataset_id: str, 
+        group_by: Optional[str] = None,
+        aggregate_column: Optional[str] = None,
+        aggregate_func: str = "sum",
+        filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
-        """Prepend mandatory match stage to keep queries session-scoped."""
-        if not isinstance(pipeline, list):
-            raise ValueError("Pipeline must be provided as a list of stages")
+        """
+        Run a simple aggregation query on the dataset.
+        
+        This replaces MongoDB's aggregation pipeline with a Python-based approach
+        since complex aggregations on JSONB require PostgreSQL-specific queries.
+        """
+        try:
+            # Get all rows and use pandas for aggregation
+            rows = self.get_all_rows(session_id, dataset_id)
+            if not rows:
+                return []
+            
+            df = pd.DataFrame(rows)
+            
+            # Apply filters if provided
+            if filters:
+                for col, value in filters.items():
+                    if col in df.columns:
+                        df = df[df[col] == value]
+            
+            # Perform aggregation
+            if group_by and aggregate_column:
+                if group_by not in df.columns or aggregate_column not in df.columns:
+                    return []
+                
+                if aggregate_func == "sum":
+                    result = df.groupby(group_by)[aggregate_column].sum()
+                elif aggregate_func == "avg" or aggregate_func == "mean":
+                    result = df.groupby(group_by)[aggregate_column].mean()
+                elif aggregate_func == "count":
+                    result = df.groupby(group_by)[aggregate_column].count()
+                elif aggregate_func == "min":
+                    result = df.groupby(group_by)[aggregate_column].min()
+                elif aggregate_func == "max":
+                    result = df.groupby(group_by)[aggregate_column].max()
+                else:
+                    result = df.groupby(group_by)[aggregate_column].sum()
+                
+                result = result.reset_index()
+                return result.to_dict('records')
+            
+            elif aggregate_column:
+                if aggregate_column not in df.columns:
+                    return []
+                
+                if aggregate_func == "sum":
+                    value = df[aggregate_column].sum()
+                elif aggregate_func == "avg" or aggregate_func == "mean":
+                    value = df[aggregate_column].mean()
+                elif aggregate_func == "count":
+                    value = len(df)
+                elif aggregate_func == "min":
+                    value = df[aggregate_column].min()
+                elif aggregate_func == "max":
+                    value = df[aggregate_column].max()
+                else:
+                    value = df[aggregate_column].sum()
+                
+                return [{"result": value}]
+            
+            return rows
+            
+        except Exception as exc:
+            LOGGER.error(f"Aggregation failed: {exc}")
+            return []
 
-        guard = {"session_id": session_id, "dataset_id": dataset_id}
-        security_stage = {"$match": guard}
 
-        if pipeline and isinstance(pipeline[0], dict) and "$match" in pipeline[0]:
-            return [
-                {"$match": {"$and": [guard, pipeline[0]["$match"]]}},
-                *pipeline[1:],
-            ]
-
-        return [security_stage, *pipeline]
-
+# =============================================================================
+# Singleton Pattern
+# =============================================================================
 
 _DATASET_SERVICE: Optional[DatasetService] = None
 
