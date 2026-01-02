@@ -11,49 +11,30 @@ const Sidebar = () => {
   const [chatHistory, setChatHistory] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Fetch user's chat sessions
+  // Fetch user's chat sessions (disabled - new backend has no session persistence yet)
   useEffect(() => {
     const fetchSessions = async () => {
       const user = auth.currentUser;
       if (!user) return;
 
-      setIsLoading(true);
-      try {
-        const response = await apiGet(`/chat/sessions/user/${user.uid}`);
-        if (!response.ok) {
-          throw new Error('Failed to fetch sessions');
-        }
-        const data = await response.json();
-        
-        // Transform sessions to canonical chat history format (use session_id)
-        const sessions = data.sessions.map(session => ({
-          session_id: session.session_id || session.id || session._id,
-          title: session.display_name || session.title || session.name || 'Untitled Chat',
-          has_dashboard: !!session.has_dashboard,
-          message_count: session.message_count || 0,
-          created_at: session.created_at,
-          updated_at: session.updated_at,
-        }));
-
-        setChatHistory(sessions);
-
-        // Set active chat to current session if exists
-        const currentSessionId = localStorage.getItem('sessionId');
-        if (currentSessionId) {
-          setActiveChat(currentSessionId);
-        }
-      } catch (error) {
-        console.error('Failed to fetch chat sessions:', error);
-      } finally {
-        setIsLoading(false);
+      // New backend doesn't persist chat sessions; use local storage only
+      const currentSessionId = localStorage.getItem('sessionId');
+      if (currentSessionId) {
+        setActiveChat(currentSessionId);
+        setChatHistory([{
+          session_id: currentSessionId,
+          title: 'Current Chat',
+          has_dashboard: false,
+          message_count: 0,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }]);
+      } else {
+        setChatHistory([]);
       }
     };
 
     fetchSessions();
-    
-    // Refresh sessions every 30 seconds
-    const interval = setInterval(fetchSessions, 30000);
-    return () => clearInterval(interval);
   }, []);
 
   const handleDeleteChat = async (id, e) => {
@@ -65,25 +46,15 @@ const Sidebar = () => {
       return;
     }
 
-    try {
-      const response = await apiDelete(`/chat/sessions/${id}`);
-
-      if (!response.ok) {
-        throw new Error('Failed to delete session');
-      }
-
-      // Remove from local state
-      setChatHistory(prev => prev.filter(chat => chat.session_id !== id));
-      
-      // If deleted session was active, clear it
-      if (activeChat === id) {
-        setActiveChat(null);
-        localStorage.removeItem('sessionId');
-        window.location.reload(); // Reload to create new session
-      }
-    } catch (error) {
-      console.error('Failed to delete chat:', error);
-      alert('Failed to delete chat session. Please try again.');
+    // Clear local state only (new backend has no session persistence)
+    setChatHistory(prev => prev.filter(chat => chat.session_id !== id));
+    
+    // If deleted session was active, clear it
+    if (activeChat === id) {
+      setActiveChat(null);
+      localStorage.removeItem('sessionId');
+      localStorage.removeItem('datasetId');
+      window.location.reload(); // Reload to create new session
     }
   };
 
@@ -91,6 +62,7 @@ const Sidebar = () => {
     // Clear session and navigate to create a fresh chat
     localStorage.removeItem('sessionId');
     localStorage.removeItem('sessionUserId');
+    localStorage.removeItem('datasetId');
     window.location.href = '/chat';
   };
 

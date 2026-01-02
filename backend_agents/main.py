@@ -6,15 +6,21 @@ Complete implementation in a single file
 import os
 import re
 import uuid
+import os
+import re
+import uuid
 import json
+import smtplib
 import pandas as pd
 from io import StringIO
 from datetime import datetime
 from typing import Dict, List, Any, Tuple, Generator, Optional
+from email.mime.text import MIMEText
 from pydantic import BaseModel
 
 from fastapi import FastAPI, APIRouter, UploadFile, File, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from sqlalchemy import Column, String, Integer, Text, DateTime, JSON, Index, create_engine, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
@@ -439,7 +445,7 @@ app.include_router(router)
 
 def call_llm_with_fallback(prompt: str, system_message: str = "You are a helpful assistant.", temperature: float = 0.7, max_tokens: int = 1000, response_format: str = "text") -> str:
     """
-    Call LLM with Groq only (no fallback)
+    Call LLM with Groq primary, Gemini fallback
     
     Args:
         prompt: User prompt
@@ -452,35 +458,219 @@ def call_llm_with_fallback(prompt: str, system_message: str = "You are a helpful
         LLM response as string
     """
     groq_api_key = os.getenv("GROQ_API_KEY")
-    if not groq_api_key:
-        raise ValueError("GROQ_API_KEY not configured")
+    gemini_api_key = os.getenv("GEMINI_API_KEY")
+    
+    if not groq_api_key and not gemini_api_key:
+        raise ValueError("Neither GROQ_API_KEY nor GEMINI_API_KEY configured")
 
-    try:
-        groq_client = Groq(api_key=groq_api_key)
-        messages = [
-            {"role": "system", "content": system_message},
-            {"role": "user", "content": prompt}
-        ]
+    # Try Groq first
+    if groq_api_key:
+        try:
+            groq_client = Groq(api_key=groq_api_key)
+            messages = [
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": prompt}
+            ]
 
-        if response_format == "json":
-            completion = groq_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                response_format={"type": "json_object"}
+            if response_format == "json":
+                completion = groq_client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    response_format={"type": "json_object"}
+                )
+            else:
+                completion = groq_client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens
+                )
+
+            return completion.choices[0].message.content
+        except Exception as groq_error:
+            print(f"⚠️ Groq failed: {str(groq_error)}. Trying Gemini...")
+            # Continue to Gemini fallback
+    
+    # Fallback to Gemini
+    if gemini_api_key:
+        try:
+            genai.configure(api_key=gemini_api_key)
+            # Use gemini-2.0-flash which is available as of 2026
+            model = genai.GenerativeModel('gemini-2.0-flash')
+            
+            # Combine system message and prompt
+            full_prompt = f"{system_message}\n\n{prompt}"
+            
+            if response_format == "json":
+                full_prompt += "\n\nReturn ONLY valid JSON, no markdown code blocks."
+            
+            response = model.generate_content(
+                full_prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=temperature,
+                    max_output_tokens=max_tokens,
+                )
             )
-        else:
-            completion = groq_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens
-            )
+            
+            result_text = response.text
+            # Strip markdown code blocks if present
+            if result_text.startswith("```"):
+                lines = result_text.split("\n")
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]
+                result_text = "\n".join(lines)
+            
+            print(f"✅ Gemini fallback succeeded")
+            return result_text
+        except Exception as gemini_error:
+            print(f"❌ Gemini also failed: {str(gemini_error)}")
+            raise Exception(f"Both LLM providers failed. Groq: {groq_error if 'groq_error' in locals() else 'Not attempted'}. Gemini: {str(gemini_error)}")
+    
+    raise Exception("No LLM provider available")
 
-        return completion.choices[0].message.content
-    except Exception as e:
-        raise Exception(f"Groq LLM call failed: {str(e)}")
+
+# ============================================================================
+# EMAIL / OTP SERVICE
+# ============================================================================
+
+class EmailSendRequest(BaseModel):
+    email: str
+
+
+class EmailVerifyRequest(BaseModel):
+    email: str
+    otp: str
+
+
+class EmailService:
+    """Simple OTP email service using SMTP (Gmail app password recommended)."""
+
+    def __init__(self):
+        self.email_user = os.getenv("EMAIL_USER")
+        self.email_password = os.getenv("EMAIL_APP_PASSWORD")
+        self.otp_expiry_seconds = int(os.getenv("OTP_EXPIRY_SECONDS", "300"))
+        self.max_otp_attempts = int(os.getenv("OTP_MAX_ATTEMPTS", "3"))
+        self.rate_limit_window_ms = int(os.getenv("OTP_RATE_WINDOW_MS", "60000"))
+        self.max_requests_per_window = int(os.getenv("OTP_MAX_REQUESTS_PER_WINDOW", "5"))
+
+        if not self.email_user or not self.email_password:
+            print("⚠️  EMAIL_USER or EMAIL_APP_PASSWORD not configured. OTP emails will fail.")
+
+        # In-memory stores
+        self.otp_store: Dict[str, Dict[str, Any]] = {}
+        self.rate_limit_store: Dict[str, Dict[str, Any]] = {}
+
+    def _generate_otp(self) -> str:
+        return str(uuid.uuid4().int)[-6:]
+
+    def _check_rate_limit(self, email: str) -> Tuple[bool, Optional[int]]:
+        now = datetime.utcnow().timestamp() * 1000
+        record = self.rate_limit_store.get(email)
+        if not record or now > record["reset_at"]:
+            self.rate_limit_store[email] = {"count": 1, "reset_at": now + self.rate_limit_window_ms}
+            return True, None
+        if record["count"] >= self.max_requests_per_window:
+            retry_in = int((record["reset_at"] - now) / 1000)
+            return False, max(retry_in, 1)
+        record["count"] += 1
+        return True, None
+
+    def _save_otp(self, email: str, otp: str) -> None:
+        expires_at = datetime.utcnow().timestamp() + self.otp_expiry_seconds
+        self.otp_store[email] = {"otp": otp, "expires_at": expires_at, "attempts": 0}
+
+    def _verify_otp(self, email: str, otp: str) -> Tuple[bool, str]:
+        record = self.otp_store.get(email)
+        if not record:
+            return False, "No OTP found for this email"
+        now = datetime.utcnow().timestamp()
+        if now > record["expires_at"]:
+            self.otp_store.pop(email, None)
+            return False, "OTP has expired"
+        if record["attempts"] >= self.max_otp_attempts:
+            self.otp_store.pop(email, None)
+            return False, "Too many failed attempts. Please request a new OTP"
+        if record["otp"] != otp:
+            record["attempts"] += 1
+            remaining = max(self.max_otp_attempts - record["attempts"], 0)
+            return False, f"Invalid OTP. {remaining} attempts remaining"
+        # Success
+        self.otp_store.pop(email, None)
+        return True, "OTP verified successfully"
+
+    def _send_email(self, to_email: str, otp: str) -> None:
+        if not self.email_user or not self.email_password:
+            raise HTTPException(status_code=500, detail="Email credentials not configured")
+
+        subject = "Your DataCue verification code"
+        body = f"""
+        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">
+          <h2 style=\"color: #333;\">DataCue Email Verification</h2>
+          <p>Your one-time verification code is:</p>
+          <p style=\"font-size: 2rem; font-weight: bold; letter-spacing: 0.3rem; color: #0066cc; text-align: center; padding: 20px; background: #f5f5f5; border-radius: 8px;\">
+            {otp}
+          </p>
+          <p style=\"color: #666;\">This code will expire in {int(self.otp_expiry_seconds/60)} minutes.</p>
+          <p style=\"color: #999; font-size: 0.9rem;\">If you didn't request this code, please ignore this email.</p>
+        </div>
+        """
+
+        msg = MIMEText(body, "html")
+        msg["Subject"] = subject
+        msg["From"] = self.email_user
+        msg["To"] = to_email
+        msg["Date"] = formatdate(localtime=True)
+
+        try:
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+                server.login(self.email_user, self.email_password)
+                server.sendmail(self.email_user, [to_email], msg.as_string())
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to send OTP email: {str(e)}")
+
+    def send_otp(self, request: EmailSendRequest) -> Dict[str, Any]:
+        allowed, retry_in = self._check_rate_limit(request.email)
+        if not allowed:
+            raise HTTPException(status_code=429, detail=f"Too many requests. Try again in {retry_in} seconds")
+
+        otp = self._generate_otp()
+        self._save_otp(request.email, otp)
+        self._send_email(request.email, otp)
+        return {"success": True, "message": "OTP sent successfully"}
+
+    def verify_otp(self, request: EmailVerifyRequest) -> Dict[str, Any]:
+        valid, message = self._verify_otp(request.email, request.otp)
+        if not valid:
+            raise HTTPException(status_code=400, detail=message)
+        return {"success": True, "message": message}
+
+
+email_router = APIRouter(prefix="/email", tags=["Email / OTP"])
+email_service = EmailService()
+
+
+@email_router.post("/send-otp")
+def send_otp_endpoint(payload: EmailSendRequest):
+    return email_service.send_otp(payload)
+
+
+@email_router.post("/verify-otp")
+def verify_otp_endpoint(payload: EmailVerifyRequest):
+    return email_service.verify_otp(payload)
+
+
+@email_router.get("/health")
+def email_health():
+    return {
+        "status": "ok",
+        "activeOtps": len(email_service.otp_store),
+        "rateLimited": len(email_service.rate_limit_store),
+        "uptime_seconds": int(datetime.utcnow().timestamp())
+    }
 
 
 # ============================================================================
@@ -535,6 +725,22 @@ Chart specification:
 - Metrics: {', '.join(chart.metrics)}
 - Description: {chart.description}
 
+You are allowed to generate the following chart types when appropriate:
+- bar, stacked_bar
+- line, area
+- pie
+- scatter
+- histogram
+- box
+- heatmap
+
+Chart type guidelines:
+- Use scatter when comparing two numeric columns
+- Use histogram for numeric distributions
+- Use box plots to show spread and outliers
+- Use heatmaps for categorical × categorical aggregations
+- Prefer diversity: avoid repeating the same chart type unless necessary
+
 Rules:
 - Output ONLY valid PostgreSQL SQL (no markdown, no explanations)
 - SELECT statements only
@@ -584,6 +790,10 @@ ORDER BY avg_revenue DESC;
         
         # Must start with SELECT
         if not sql_upper.startswith('SELECT'):
+            return False
+
+        # Must target our dataset table
+        if 'FROM DATASET_ROWS' not in sql_upper:
             return False
         
         # Must not contain dangerous keywords
@@ -810,8 +1020,79 @@ ORDER BY avg_revenue DESC;
         
         # Chart is valid
         return chart_type, None
+
+    def generate_sql_queries_batch(self, schema: Dict, charts: List[ChartSpec], dataset_id: str) -> Dict[str, str]:
+        """Generate SQL for all charts in a single LLM call to reduce rate limits."""
+
+        chart_summaries = []
+        for c in charts:
+            chart_summaries.append({
+                "chart_id": c.chart_id,
+                "title": c.title,
+                "chart_type": c.chart_type,
+                "description": c.description,
+                "dimensions": c.dimensions,
+                "metrics": c.metrics,
+            })
+
+        prompt = f"""You are generating PostgreSQL SELECT queries for ALL charts in one response.
+
+DATASET SCHEMA (columns with types):
+{json.dumps(schema['columns'], indent=2)}
+
+Table name: dataset_rows
+Data stored as JSON in column 'data'
+Access fields with data->>'column_name'
+Use WHERE dataset_id = '{dataset_id}' in every query
+
+Chart specifications:
+{json.dumps(chart_summaries, indent=2)}
+
+Rules:
+- Output ONLY valid JSON, no markdown
+- Return queries for every chart_id
+- SELECT-only queries; read-only
+- Use correct casts: numeric -> CAST(data->>'col' AS NUMERIC); date -> CAST(data->>'col' AS DATE)
+- Use GROUP BY when aggregating dimensions
+- Use ORDER BY when sorting
+- Avoid hallucinating columns; only use schema columns
+
+Return JSON in this exact shape:
+{{
+  "queries": [
+    {{ "chart_id": "chart_1", "sql": "SELECT ..." }}
+  ]
+}}
+"""
+
+        try:
+            response = call_llm_with_fallback(
+                prompt=prompt,
+                system_message="You are a PostgreSQL expert. Return only JSON with SQL queries for all charts.",
+                temperature=0.3,
+                max_tokens=2000,
+                response_format="json"
+            )
+
+            parsed = json.loads(response)
+            queries = parsed.get("queries", []) if isinstance(parsed, dict) else []
+
+            # Build mapping chart_id -> sql
+            sql_map = {}
+            for item in queries:
+                cid = item.get("chart_id")
+                sql = item.get("sql") or item.get("sql_query")
+                if cid and sql:
+                    # Clean potential markdown fences
+                    sql_clean = sql.replace("```sql", "").replace("```", "").strip()
+                    sql_map[cid] = sql_clean
+
+            return sql_map
+        except Exception as e:
+            print(f"⚠️  Batch SQL generation failed, falling back to per-chart: {str(e)}")
+            return {}
     
-    def generate_chart(self, schema: Dict, chart: ChartSpec, dataset_id: str) -> Dict[str, Any]:
+    def generate_chart(self, schema: Dict, chart: ChartSpec, dataset_id: str, sql_overrides: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """Phase 2C: Generate single chart (SQL generation + execution)"""
         
         try:
@@ -835,8 +1116,11 @@ ORDER BY avg_revenue DESC;
             if corrected_type != chart.chart_type:
                 chart.chart_type = corrected_type
             
-            # Step 1: Generate SQL using LLM
-            sql_query = self.generate_sql_query(schema, chart, dataset_id)
+            # Step 1: Generate SQL (prefer batch-generated if available)
+            if sql_overrides and chart.chart_id in sql_overrides:
+                sql_query = sql_overrides[chart.chart_id]
+            else:
+                sql_query = self.generate_sql_query(schema, chart, dataset_id)
             print(f"📊 Generated SQL for {chart.chart_id}:")
             print(f"   {sql_query[:100]}...")
             
@@ -890,6 +1174,9 @@ ORDER BY avg_revenue DESC;
             raise HTTPException(status_code=404, detail="Dataset not found")
         
         print(f"\n🚀 Generating dashboard with {len(request.charts)} charts...")
+
+        # Single LLM call: generate SQL for all charts at once (reduces rate limits)
+        sql_batch_map = self.generate_sql_queries_batch(schema, request.charts, request.dataset_id)
         
         # Generate all charts
         charts = []
@@ -897,7 +1184,7 @@ ORDER BY avg_revenue DESC;
         
         for i, chart_spec in enumerate(request.charts, 1):
             print(f"\n📈 Processing chart {i}/{len(request.charts)}: {chart_spec.title}")
-            chart_result = self.generate_chart(schema, chart_spec, request.dataset_id)
+            chart_result = self.generate_chart(schema, chart_spec, request.dataset_id, sql_overrides=sql_batch_map)
             
             # NORMALIZE: Ensure chart_type field exists (Phase 2 fix)
             if 'chart_type' not in chart_result and 'type' in chart_result:
@@ -1075,6 +1362,152 @@ app.include_router(dashboard_router, prefix="/dashboard", tags=["Phase 2: Dashbo
 
 
 # =====================================================================
+# EMAIL OTP SERVICE (from legacy email-service)
+# =====================================================================
+
+class SendOtpRequest(BaseModel):
+    email: str
+
+
+class VerifyOtpRequest(BaseModel):
+    email: str
+    otp: str
+
+
+class EmailOtpService:
+    """In-memory OTP service with rate limiting and expiry."""
+
+    OTP_EXPIRY_SECONDS = int(os.getenv("OTP_EXPIRY_SECONDS", "300"))
+    MAX_OTP_ATTEMPTS = int(os.getenv("MAX_OTP_ATTEMPTS", "3"))
+    RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("OTP_RATE_LIMIT_WINDOW_SECONDS", "60"))
+    MAX_REQUESTS_PER_WINDOW = int(os.getenv("OTP_MAX_REQUESTS_PER_WINDOW", "5"))
+
+    SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USERNAME = os.getenv("SMTP_USERNAME") or os.getenv("EMAIL_USER")
+    SMTP_PASSWORD = os.getenv("SMTP_PASSWORD") or os.getenv("EMAIL_APP_PASSWORD")
+    FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL") or SMTP_USERNAME or ""
+    FROM_NAME = os.getenv("SMTP_FROM_NAME", "DataCue")
+
+    def __init__(self):
+        self.otp_store: Dict[str, Dict[str, Any]] = {}
+        self.rate_limit_store: Dict[str, Dict[str, Any]] = {}
+
+    def _generate_otp(self) -> str:
+        return str(uuid.uuid4().int)[-6:]
+
+    def _save_otp(self, email: str, otp: str) -> None:
+        expires_at = datetime.utcnow().timestamp() + self.OTP_EXPIRY_SECONDS
+        self.otp_store[email] = {"otp": otp, "expires_at": expires_at, "attempts": 0}
+
+    def _verify_otp(self, email: str, otp: str) -> Tuple[bool, str]:
+        record = self.otp_store.get(email)
+        if not record:
+            return False, "No OTP found for this email"
+        now = datetime.utcnow().timestamp()
+        if now > record["expires_at"]:
+            self.otp_store.pop(email, None)
+            return False, "OTP has expired"
+        if record["attempts"] >= self.MAX_OTP_ATTEMPTS:
+            self.otp_store.pop(email, None)
+            return False, "Too many failed attempts. Please request a new OTP"
+        if record["otp"] != otp:
+            record["attempts"] += 1
+            remaining = max(self.MAX_OTP_ATTEMPTS - record["attempts"], 0)
+            return False, f"Invalid OTP. {remaining} attempts remaining"
+        self.otp_store.pop(email, None)
+        return True, "OTP verified successfully"
+
+    def _check_rate_limit(self, email: str) -> Tuple[bool, Optional[int]]:
+        now = datetime.utcnow().timestamp()
+        record = self.rate_limit_store.get(email)
+        if not record or now > record["reset_at"]:
+            self.rate_limit_store[email] = {"count": 1, "reset_at": now + self.RATE_LIMIT_WINDOW_SECONDS}
+            return True, None
+        if record["count"] >= self.MAX_REQUESTS_PER_WINDOW:
+            retry_in = int(record["reset_at"] - now)
+            return False, max(retry_in, 0)
+        record["count"] += 1
+        return True, None
+
+    def _send_email(self, to_email: str, subject: str, html_body: str) -> None:
+        if not self.SMTP_USERNAME or not self.SMTP_PASSWORD:
+            raise RuntimeError("SMTP credentials not configured")
+
+        msg = MIMEText(html_body, "html")
+        msg["Subject"] = subject
+        msg["From"] = f"{self.FROM_NAME} <{self.FROM_EMAIL or self.SMTP_USERNAME}>"
+        msg["To"] = to_email
+
+        with smtplib.SMTP(self.SMTP_HOST, self.SMTP_PORT) as server:
+            server.starttls()
+            server.login(self.SMTP_USERNAME, self.SMTP_PASSWORD)
+            server.sendmail(msg["From"], [to_email], msg.as_string())
+
+    def send_otp(self, email: str) -> Dict[str, Any]:
+        allowed, retry_in = self._check_rate_limit(email)
+        if not allowed:
+            raise HTTPException(status_code=429, detail=f"Too many requests. Please try again in {retry_in} seconds")
+
+        otp = self._generate_otp()
+        self._save_otp(email, otp)
+
+        minutes = max(int(self.OTP_EXPIRY_SECONDS // 60), 1)
+        body = f"""
+        <div style='font-family: Arial, sans-serif; max-width: 600px;'>
+          <h2 style='color: #333;'>DataCue Email Verification</h2>
+          <p>Your one-time verification code is:</p>
+          <p style='font-size: 2rem; font-weight: bold; letter-spacing: 0.3rem; color: #0066cc; text-align: center; padding: 20px; background: #f5f5f5; border-radius: 8px;'>
+            {otp}
+          </p>
+          <p style='color: #666;'>This code will expire in {minutes} minute(s).</p>
+          <p style='color: #999; font-size: 0.9rem;'>If you didn't request this code, please ignore this email.</p>
+        </div>
+        """
+
+        self._send_email(
+            to_email=email,
+            subject="Your DataCue verification code",
+            html_body=body
+        )
+
+        return {"success": True, "message": "OTP sent successfully"}
+
+    def verify_otp(self, email: str, otp: str) -> Dict[str, Any]:
+        valid, message = self._verify_otp(email, otp)
+        if not valid:
+            raise HTTPException(status_code=400, detail=message)
+        return {"success": True, "message": message}
+
+
+email_router = APIRouter(prefix="/email", tags=["Email OTP"])
+email_service = EmailOtpService()
+
+
+@email_router.post("/send-otp")
+def send_otp_endpoint(payload: SendOtpRequest):
+    return email_service.send_otp(payload.email)
+
+
+@email_router.post("/verify-otp")
+def verify_otp_endpoint(payload: VerifyOtpRequest):
+    return email_service.verify_otp(payload.email, payload.otp)
+
+
+# Simple navigation router (login -> dashboard redirect)
+nav_router = APIRouter(tags=["Navigation"])
+
+
+@nav_router.get("/login")
+def redirect_login_to_dashboard():
+    return RedirectResponse(url="/dashboard", status_code=307)
+
+
+app.include_router(email_router)
+app.include_router(nav_router)
+
+
+# =====================================================================
 # PHASE 3: CHAT WITH CSV (SQL + INSIGHT RENDERING)
 # =====================================================================
 
@@ -1116,10 +1549,11 @@ class ChatService:
         schema_str = json.dumps(schema['columns'], sort_keys=True)
         return f"{schema['dataset_id']}:{hash(schema_str + question.lower())}"
     
-    def generate_deterministic_sql(self, schema: Dict[str, Any], question: str) -> Optional[Tuple[str, str]]:
+    def generate_deterministic_sql(self, schema: Dict[str, Any], question: str) -> Optional[str]:
         """
         Rule-based SQL generator for common query patterns
-        Returns (sql, intent) or None if pattern not matched
+        Intent will be determined from result shape, not hardcoded here.
+        Returns sql_query or None if pattern not matched
         """
         q = question.lower().strip()
         dataset_id = schema['dataset_id']
@@ -1136,7 +1570,7 @@ class ChatService:
             for col in numeric_cols:
                 if col.replace('_', ' ') in q:
                     sql = f"SELECT SUM(CAST(data->>'{col}' AS NUMERIC)) AS total_{col} FROM dataset_rows WHERE dataset_id = '{dataset_id}'"
-                    return (sql, "kpi")
+                    return sql
         
         # PATTERN 2: Count KPI
         # "how many customers", "count of orders"
@@ -1145,10 +1579,10 @@ class ChatService:
             for col in list(columns.keys()):
                 if col.replace('_', ' ') in q:
                     sql = f"SELECT COUNT(DISTINCT data->>'{col}') AS count_{col} FROM dataset_rows WHERE dataset_id = '{dataset_id}'"
-                    return (sql, "kpi")
+                    return sql
             # Fallback: count all rows
             sql = f"SELECT COUNT(*) AS total_count FROM dataset_rows WHERE dataset_id = '{dataset_id}'"
-            return (sql, "kpi")
+            return sql
         
         # PATTERN 3: Average KPI
         # "average satisfaction", "mean age"
@@ -1156,7 +1590,7 @@ class ChatService:
             for col in numeric_cols:
                 if col.replace('_', ' ') in q:
                     sql = f"SELECT AVG(CAST(data->>'{col}' AS NUMERIC)) AS avg_{col} FROM dataset_rows WHERE dataset_id = '{dataset_id}'"
-                    return (sql, "kpi")
+                    return sql
         
         # PATTERN 4: Group by aggregation (chart)
         # "revenue by region", "sales by product", "satisfaction by gender"
@@ -1175,7 +1609,7 @@ class ChatService:
                             agg = 'SUM'  # Default
                         
                         sql = f"SELECT data->>'{cat_col}' AS {cat_col}, {agg}(CAST(data->>'{num_col}' AS NUMERIC)) AS {num_col} FROM dataset_rows WHERE dataset_id = '{dataset_id}' GROUP BY data->>'{cat_col}' ORDER BY {num_col} DESC"
-                        return (sql, "chart")
+                        return sql
         
         # PATTERN 5: Top N queries (table)
         # "top 5 products", "show me the best regions"
@@ -1191,7 +1625,7 @@ class ChatService:
                 for cat_col in list(columns.keys()):
                     if cat_col.replace('_', ' ') in q and num_col.replace('_', ' ') in q:
                         sql = f"SELECT data->>'{cat_col}' AS {cat_col}, CAST(data->>'{num_col}' AS NUMERIC) AS {num_col} FROM dataset_rows WHERE dataset_id = '{dataset_id}' ORDER BY CAST(data->>'{num_col}' AS NUMERIC) DESC LIMIT {limit}"
-                        return (sql, "table")
+                        return sql
         
         # PATTERN 6: List all with aggregation (chart)
         # "list all regions with total revenue"
@@ -1201,7 +1635,7 @@ class ChatService:
                     for num_col in numeric_cols:
                         if num_col.replace('_', ' ') in q:
                             sql = f"SELECT data->>'{cat_col}' AS {cat_col}, SUM(CAST(data->>'{num_col}' AS NUMERIC)) AS total_{num_col} FROM dataset_rows WHERE dataset_id = '{dataset_id}' GROUP BY data->>'{cat_col}' ORDER BY total_{num_col} DESC"
-                            return (sql, "chart")
+                            return sql
         
         # PATTERN 7: Time series (chart)
         # "revenue over time", "sales trend", "by date"
@@ -1210,22 +1644,23 @@ class ChatService:
                 for num_col in numeric_cols:
                     if num_col.replace('_', ' ') in q:
                         sql = f"SELECT data->>'{date_col}' AS {date_col}, SUM(CAST(data->>'{num_col}' AS NUMERIC)) AS total_{num_col} FROM dataset_rows WHERE dataset_id = '{dataset_id}' GROUP BY data->>'{date_col}' ORDER BY data->>'{date_col}'"
-                        return (sql, "chart")
+                        return sql
         
         # No pattern matched
         return None
     
-    def generate_sql_from_question(self, schema: Dict[str, Any], question: str) -> Tuple[str, str]:
+    def generate_sql_from_question(self, schema: Dict[str, Any], question: str) -> str:
         """
-        Phase 3A: Convert natural language question to SQL + intent
+        Phase 3A: Convert natural language question to SQL
         Uses: 1. Cache lookup 2. Deterministic rules 3. LLM fallback
+        Intent is determined from result shape, not here.
         
         Args:
             schema: Dataset schema with column names and types
             question: User's natural language question
         
         Returns:
-            (sql_query, intent_type)
+            sql_query (intent will be determined from result shape)
         """
         
         # Step 1: Check cache
@@ -1252,17 +1687,23 @@ DATASET SCHEMA:
 USER QUESTION: "{question}"
 
 Your task:
-1. Write a PostgreSQL SELECT query to answer this question
-2. Determine the intent type: kpi, table, chart, or text
+Write a PostgreSQL SELECT query to answer this question.
 
 RULES:
-
-INTENT TYPES:
+- Table name: dataset_rows
+- Data stored as JSON in 'data' column
+- Access columns using: data->>'column_name'
+- Use WHERE dataset_id = '{schema['dataset_id']}'
+- Cast numeric columns: CAST(data->>'column' AS NUMERIC)
+- Cast datetime columns: CAST(data->>'column' AS DATE)
+- Use appropriate aggregations (SUM, AVG, COUNT, etc.)
+- Use GROUP BY when aggregating by dimensions
+- Use ORDER BY for sorted results
+- Use LIMIT for top N queries
 
 Return ONLY valid JSON in this format:
 {{
-  "sql_query": "SELECT ...",
-  "intent": "kpi"
+  "sql_query": "SELECT ..."
 }}
 """
         
@@ -1280,16 +1721,14 @@ Return ONLY valid JSON in this format:
             
             result = json.loads(completion.choices[0].message.content)
             sql_query = result.get("sql_query", "")
-            intent = result.get("intent", "table")
             
             # Clean up SQL (remove markdown code blocks if present)
             sql_query = sql_query.replace("```sql", "").replace("```", "").strip()
             
             # Cache the result
-            llm_result = (sql_query, intent)
-            self._sql_cache[cache_key] = llm_result
+            self._sql_cache[cache_key] = sql_query
             
-            return llm_result
+            return sql_query
             
         except Exception as e:
             raise Exception(f"Failed to generate SQL: {str(e)}")
@@ -1388,6 +1827,7 @@ Return ONLY valid JSON in this format:
             }
             
         except Exception as e:
+            self.db.rollback()
             raise Exception(f"Query execution failed: {str(e)}")
     
     def generate_explanation(self, question: str, result: Dict[str, Any]) -> str:
@@ -1462,13 +1902,13 @@ Return ONLY the explanation text (no JSON, no formatting).
                     error="Dataset not found"
                 )
             
-            # Step 2: Generate SQL (ignore LLM intent, we'll detect from result)
-            sql_query, _ = self.generate_sql_from_question(schema, request.question)
+            # Step 2: Generate SQL (no intent - will be determined from result)
+            sql_query = self.generate_sql_from_question(schema, request.question)
             
             # Step 3: Execute query
             result = self.execute_chat_query(sql_query)
             
-            # Step 4: Detect intent from result shape (Phase 3 fix)
+            # Step 4: Intent determined from result shape (auto-detection)
             intent = result["result_type"]  # kpi, table, chart, or empty
             
             # Step 5: Generate explanation (if requested)
@@ -1492,8 +1932,8 @@ Return ONLY the explanation text (no JSON, no formatting).
             # Capture SQL query if it was generated before the error
             sql_query = ""
             try:
-                sql_query, _ = self.generate_sql_from_question(
-                    ingestion_service.get_schema(request.dataset_id), 
+                sql_query = self.generate_sql_from_question(
+                    ingestion_service.get_schema(request.dataset_id),
                     request.question
                 )
             except:

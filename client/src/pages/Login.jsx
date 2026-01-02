@@ -3,6 +3,7 @@ import { FcGoogle } from 'react-icons/fc';
 import { useNavigate } from 'react-router-dom';
 import { GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from '../firebase';
+import { API_BASE_URL } from '../lib/api';
 import sessionManager from '../utils/sessionManager';
 import { setOtpFlowInProgress } from '../context/AuthContext';
 
@@ -11,7 +12,7 @@ const Login = () => {
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [isCheckingSession, setIsCheckingSession] = useState(true);
-  const emailServiceUrl = import.meta.env.VITE_EMAIL_SERVICE_URL ?? 'http://localhost:4000';
+  const emailServiceUrl = API_BASE_URL;
   const signInInProgressRef = useRef(false);
 
   useEffect(() => {
@@ -56,7 +57,7 @@ const Login = () => {
 
   const sendOtp = async (email) => {
     try {
-      const url = `${emailServiceUrl.replace(/\/$/, '')}/send-otp`;
+      const url = `${emailServiceUrl.replace(/\/$/, '')}/email/send-otp`;
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

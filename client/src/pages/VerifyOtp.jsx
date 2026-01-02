@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from '../firebase';
+import { API_BASE_URL } from '../lib/api';
 import sessionManager from '../utils/sessionManager';
 
 const VerifyOtp = () => {
@@ -15,7 +16,7 @@ const VerifyOtp = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [secondsRemaining, setSecondsRemaining] = useState(300);
   const [isCheckingSession, setIsCheckingSession] = useState(true);
-  const emailServiceUrl = (import.meta.env.VITE_EMAIL_SERVICE_URL ?? 'http://localhost:4000').replace(/\/$/, '');
+  const emailServiceUrl = API_BASE_URL.replace(/\/$/, '');
 
   useEffect(() => {
     // If accessing verify-otp without coming from login flow, redirect to login
@@ -64,7 +65,7 @@ const VerifyOtp = () => {
     setIsSubmitting(true);
     setStatusMessage('Resending OTP…');
     try {
-      const response = await fetch(`${emailServiceUrl}/send-otp`, {
+      const response = await fetch(`${emailServiceUrl}/email/send-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
@@ -94,7 +95,7 @@ const VerifyOtp = () => {
     setIsSubmitting(true);
     setStatusMessage('Verifying code…');
     try {
-      const response = await fetch(`${emailServiceUrl}/verify-otp`, {
+      const response = await fetch(`${emailServiceUrl}/email/verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, otp: otp.trim() }),

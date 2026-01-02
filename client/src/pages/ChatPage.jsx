@@ -4,11 +4,12 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import Sidebar from '../components/Sidebar';
 import Navbar from '../components/Navbar';
 import ChartMessage from '../components/ChartMessage';
-import { FiSend, FiUpload, FiUser } from 'react-icons/fi';
+import { FiSend, FiUpload, FiUser, FiBarChart2, FiX } from 'react-icons/fi';
 import { HiSparkles } from 'react-icons/hi2';
+import Plot from 'react-plotly.js';
 import { auth } from '../firebase';
 import sessionManager from '../utils/sessionManager';
-import { apiGet, apiPost, apiPatch, apiPostForm, API_BASE_URL } from '../lib/api';
+import { apiPost, apiPostForm, API_BASE_URL } from '../lib/api';
 const STAGE_LABELS = {
   upload_received: '📁 Upload received. Preparing analysis…',
   reading_csv: '🔍 Reading CSV and validating columns…',
@@ -34,7 +35,11 @@ const ChatPage = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStatusMessage, setUploadStatusMessage] = useState('');
   const [hasDashboard, setHasDashboard] = useState(false);
+  const [dashboardData, setDashboardData] = useState(null);
+  const [showDashboardModal, setShowDashboardModal] = useState(false);
+  const [isGeneratingDashboard, setIsGeneratingDashboard] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
+  const [datasetId, setDatasetId] = useState(() => localStorage.getItem('datasetId'));
   const [sessionId, setSessionId] = useState(() => localStorage.getItem('chatSessionId'));
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [healthWarning, setHealthWarning] = useState('');
@@ -50,42 +55,6 @@ const ChatPage = () => {
       return crypto.randomUUID();
     }
     return Math.random().toString(36).slice(2, 12);
-  };
-
-  const persistMessage = async (message, retries = 3) => {
-    if (!sessionId || !currentUser) {
-      return;
-    }
-
-    for (let attempt = 1; attempt <= retries; attempt++) {
-      try {
-        const response = await apiPost(`/chat/sessions/${sessionId}/messages`, {
-          id: message.id,
-          role: message.role,
-          content: message.content,
-          timestamp: message.timestamp,
-          chart: message.chart,
-          metadata: message.metadata,
-          showDashboardButton: Boolean(message.showDashboardButton),
-        });
-
-        if (response.ok) {
-          return; // Success
-        }
-
-        if (attempt === retries) {
-          throw new Error(`Failed to persist message after ${retries} attempts`);
-        }
-
-        // Wait before retry (exponential backoff)
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-      } catch (error) {
-        if (attempt === retries) {
-          console.error('Failed to persist chat message:', error);
-          // Could show a toast notification here
-        }
-      }
-    }
   };
 
   useEffect(() => {
@@ -147,29 +116,9 @@ const ChatPage = () => {
   useEffect(() => {
     const loadHistory = async (activeSessionId) => {
       try {
-        const response = await apiGet(`/chat/sessions/${activeSessionId}/messages`);
-        if (!response.ok) {
-          throw new Error('Failed to load chat history.');
-        }
-        const payload = await response.json();
-        const history = Array.isArray(payload.messages)
-          ? payload.messages.map((message) => ({
-            id: message.id || generateMessageId(),
-            role: message.role,
-            content: message.content,
-            timestamp: message.timestamp,
-            chart: message.chart,
-            metadata: message.metadata || {},
-            showDashboardButton: Boolean(message.showDashboardButton),
-          }))
-          : [];
-
-        setMessages(history);
-
-        // Check if dashboard data exists in MongoDB
-        const hasDashboardButton = history.some((message) => message.showDashboardButton);
-        setHasDashboard(hasDashboardButton);
-
+        // No persisted history in new backend; just clear and continue
+        setMessages([]);
+        setHasDashboard(false);
         return true;
       } catch (error) {
         console.error('Failed to load chat history:', error);
@@ -184,18 +133,7 @@ const ChatPage = () => {
     };
 
     const createNewSession = async (user) => {
-      const response = await apiPost('/chat/sessions', {
-        user_id: user.uid,
-        email: user.email,
-        display_name: user.displayName,
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to create chat session.');
-      }
-
-      const payload = await response.json();
-      const newSessionId = payload.session_id;
+      const newSessionId = crypto.randomUUID();
       localStorage.setItem('sessionId', newSessionId);
       localStorage.setItem('chatSessionId', newSessionId); // Backward compatibility
       localStorage.setItem('sessionUserId', user.uid);
@@ -257,11 +195,7 @@ const ChatPage = () => {
   const appendMessage = (message, options = {}) => {
     const messageWithId = message.id ? message : { ...message, id: generateMessageId() };
     setMessages((prev) => [...prev, messageWithId]);
-
-    if (options.persist !== false) {
-      persistMessage(messageWithId);
-    }
-
+    // Note: Messages are stored in React state only (no backend persistence)
     return messageWithId;
   };
 
@@ -316,18 +250,27 @@ const ChatPage = () => {
     return title;
   };
 
-  const updateSessionTitle = async (title) => {
+  const updateSessionTitle = (title) => {
+    // Store title locally only (no backend persistence)
     if (!sessionId) return;
-
-    try {
-      await apiPatch(`/chat/sessions/${sessionId}/title`, { title });
-    } catch (error) {
-      console.error('Failed to update session title:', error);
+    const stored = JSON.parse(localStorage.getItem('chatSessions') || '[]');
+    const idx = stored.findIndex(s => s.id === sessionId);
+    if (idx >= 0) {
+      stored[idx].title = title;
+      localStorage.setItem('chatSessions', JSON.stringify(stored));
     }
   };
 
   const handleSendMessage = async () => {
     if (!inputMessage.trim() || isUploading || !sessionReady) return;
+    if (!datasetId) {
+      appendMessage({
+        role: 'assistant',
+        content: 'Please upload a CSV first so I know which dataset to query.',
+        timestamp: buildTimestamp(),
+      }, { persist: false });
+      return;
+    }
 
     const userContent = inputMessage;
     const userMessage = {
@@ -352,11 +295,11 @@ const ChatPage = () => {
 
     setIsTyping(true);
     try {
-      // Use ask-visual endpoint to get both text and optional chart
-      const response = await apiPost('/knowledge/ask-visual', {
-        question: userContent,
-        request_chart: true,
+      const response = await apiPost('/chat/query', {
+        dataset_id: datasetId,
         session_id: sessionId,
+        question: userContent,
+        include_explanation: true,
       });
 
       if (!response.ok) {
@@ -379,22 +322,23 @@ const ChatPage = () => {
 
       const payload = await response.json();
 
-      // Append text answer
+      // Build assistant text from explanation or data summary
+      const textParts = [];
+      if (payload.explanation) textParts.push(payload.explanation);
+      if (!payload.explanation && payload.data) {
+        try {
+          textParts.push(JSON.stringify(payload.data, null, 2));
+        } catch {
+          textParts.push(String(payload.data));
+        }
+      }
+      if (textParts.length === 0 && payload.message) textParts.push(payload.message);
       const assistantMessage = {
         role: 'assistant',
-        content: normaliseAnswer(payload),
+        content: textParts.join('\n\n') || 'I received a response.',
         timestamp: buildTimestamp(),
       };
-      appendMessage(assistantMessage);
-
-      // If there's a chart, append it separately
-      if (payload.chart && payload.chart.figure) {
-        appendMessage({
-          role: 'chart',
-          chart: payload.chart,
-          timestamp: buildTimestamp(),
-        });
-      }
+      appendMessage(assistantMessage, { persist: false });
     } catch (error) {
       appendMessage({
         role: 'assistant',
@@ -428,23 +372,39 @@ const ChatPage = () => {
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  const handleViewDashboard = async () => {
-    if (!sessionId) return;
+  const handleViewDashboard = () => {
+    if (dashboardData) {
+      setShowDashboardModal(true);
+    } else {
+      appendMessage({
+        role: 'assistant',
+        content: 'No dashboard available yet. Upload a CSV file to generate one automatically.',
+        timestamp: buildTimestamp(),
+      }, { persist: false });
+    }
+  };
 
+  const generateDashboard = async (datasetIdToUse, sessionIdToUse) => {
+    setIsGeneratingDashboard(true);
     try {
-      // Fetch dashboard data from database (canonical source)
-      const response = await apiGet(`/chat/sessions/${sessionId}/dashboard`);
-      if (!response.ok) {
-        console.error('No dashboard data found for this session');
-        return;
+      const dashboardResponse = await apiPost(
+        `/dashboard/generate-from-schema?dataset_id=${encodeURIComponent(datasetIdToUse)}&session_id=${encodeURIComponent(sessionIdToUse)}`
+      );
+      
+      if (dashboardResponse.ok) {
+        const dashboardPayload = await dashboardResponse.json();
+        if (dashboardPayload.success && dashboardPayload.data) {
+          setDashboardData(dashboardPayload.data);
+          setHasDashboard(true);
+          return true;
+        }
       }
-
-      const dashboardData = await response.json();
-      if (dashboardData.charts && dashboardData.charts.length > 0) {
-        navigate('/analytics', { state: { dashboardData } });
-      }
+      return false;
     } catch (error) {
-      console.error('Failed to load dashboard data:', error);
+      console.error('Dashboard generation failed:', error);
+      return false;
+    } finally {
+      setIsGeneratingDashboard(false);
     }
   };
 
@@ -464,152 +424,57 @@ const ChatPage = () => {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('dashboard_type', 'auto');
-      formData.append('include_advanced_charts', 'true');
-      formData.append('generate_dashboard_insights', 'true');
-      formData.append('knowledge_generate_insights', 'true');
-      formData.append('knowledge_generate_recommendations', 'true');
-      if (sessionId) {
-        formData.append('chat_session_id', sessionId);
+
+      const endpoint = sessionId
+        ? `/ingestion/upload?session_id=${encodeURIComponent(sessionId)}`
+        : '/ingestion/upload';
+
+      const uploadResponse = await apiPostForm(endpoint, formData, { auth: false });
+      if (!uploadResponse.ok) {
+        const text = await uploadResponse.text();
+        throw new Error(text || 'Upload failed');
       }
 
-      const sessionResponse = await apiPostForm('/orchestrator/pipeline/session', formData);
+      const payload = await uploadResponse.json();
+      const data = payload?.data || {};
+      const newDatasetId = data.dataset_id;
+      const newSessionId = data.session_id || sessionId || crypto.randomUUID();
 
-      if (!sessionResponse.ok) {
-        const errorText = await sessionResponse.text();
-        throw new Error(errorText || 'Unable to create processing session.');
+      if (!newDatasetId) {
+        throw new Error('Dataset ID missing from upload response');
       }
 
-      const sessionPayload = await sessionResponse.json();
-      const pipelineSessionId = sessionPayload?.session_id;
-      if (!pipelineSessionId) {
-        throw new Error('Pipeline session ID missing from server response.');
-      }
+      setDatasetId(newDatasetId);
+      localStorage.setItem('datasetId', newDatasetId);
 
-      const pipelineResult = await new Promise((resolve, reject) => {
-        const streamUrl = `${API_BASE_URL.replace(/\/+$/, '')}/orchestrator/pipeline/session/${pipelineSessionId}/stream`;
-        const eventSource = new EventSource(streamUrl);
+      setSessionId(newSessionId);
+      localStorage.setItem('sessionId', newSessionId);
+      localStorage.setItem('chatSessionId', newSessionId);
 
-        eventSource.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            if (!data || !data.stage) {
-              return;
-            }
+      setUploadStatusMessage('📊 Generating dashboard…');
 
-            const stageMessage = STAGE_LABELS[data.stage] || DEFAULT_STAGE_MESSAGE;
-            setUploadStatusMessage(stageMessage);
+      // Generate dashboard automatically
+      const dashboardGenerated = await generateDashboard(newDatasetId, newSessionId);
+      
+      setUploadStatusMessage('✅ Upload complete. You can now ask questions about your data.');
 
-            // Skip chart_ready events during upload (charts only shown in dashboard)
-            // Charts will still appear in chat when user asks specific questions
-            if (data.stage === 'pipeline_complete') {
-              eventSource.close();
-              resolve(data.payload);
-            } else if (data.stage === 'ingestion_failed' || data.stage === 'error') {
-              eventSource.close();
-              const errorMessage = typeof data.payload === 'object' && data.payload?.message
-                ? data.payload.message
-                : 'Pipeline failed. Please try again.';
-              reject(new Error(errorMessage));
-            }
-          } catch (parseError) {
-            console.error('Failed to parse pipeline event', parseError);
-          }
-        };
-
-        eventSource.onerror = () => {
-          eventSource.close();
-          reject(new Error('Connection lost while receiving analysis updates.'));
-        };
-      });
-
-      const datasetName = pipelineResult?.dataset_name || file.name;
-      const gridfsId = pipelineResult?.gridfs_id;
-      const datasetId = pipelineResult?.steps?.ingestion?.dataset_id || pipelineResult?.dataset_id;
-
-      // Store GridFS ID for persistence
-      if (gridfsId) {
-        localStorage.setItem('datasetGridfsId', gridfsId);
-        localStorage.setItem('datasetName', datasetName);
-      }
-
-      // Store dataset ID if available
-      if (datasetId) {
-        localStorage.setItem('datasetId', datasetId);
-      }
-
-      setUploadStatusMessage(STAGE_LABELS.pipeline_complete);
-
-      // Auto-generate title from filename on first upload
-      const isFirstMessage = messages.filter(m => m.role === 'user' || m.role === 'file').length === 0;
-      if (isFirstMessage) {
-        const title = `Analysis: ${datasetName}`;
-        updateSessionTitle(title);
-      }
-
-      // Store dashboard data in MongoDB (canonical source)
-      const dashboardData = pipelineResult?.steps?.dashboard;
-      if (dashboardData && dashboardData.charts && dashboardData.charts.length > 0) {
-        // Store in MongoDB via backend API
-        try {
-          await apiPost(`/chat/sessions/${sessionId}/dashboard`, {
-            charts: dashboardData.charts,
-            dataset_name: datasetName,
-            gridfs_id: gridfsId,
-            summary: dashboardData.summary,
-            quality_indicators: dashboardData.quality_indicators,
-            metadata_summary: dashboardData.metadata_summary,
-            layout: dashboardData.layout,
-            filters: dashboardData.filters,
-          });
-        } catch (error) {
-          console.error('Failed to store dashboard data:', error);
-        }
-
-        await sleep(500);
-
-        // Enable dashboard button
-        setHasDashboard(true);
-
-        // Show message with dashboard button (don't auto-navigate)
-        appendMessage({
-          role: 'assistant',
-          content: `✅ Analysis complete! I generated ${dashboardData.charts.length} visualizations for "${datasetName}".\n\n🎨 Your dashboard is ready with:\n• ${dashboardData.charts.filter(c => c.type === 'histogram').length} Distribution Charts\n• ${dashboardData.charts.filter(c => c.type === 'bar').length} Bar Charts\n• ${dashboardData.charts.filter(c => c.type === 'scatter').length} Scatter Plots\n• ${dashboardData.charts.filter(c => c.type === 'heatmap').length} Correlation Heatmap\n• ${dashboardData.charts.filter(c => c.type === 'sankey').length} Flow Diagram\n\nClick "View Dashboard" below to explore all visualizations, or ask me questions about the data!`,
-          timestamp: buildTimestamp(),
-          showDashboardButton: true,
-          metadata: { datasetId: datasetId },
-        });
-      } else {
-        // Fallback to chat message if no charts generated
-        appendMessage({
-          role: 'assistant',
-          content: `I have processed "${datasetName}". Ask me anything about this dataset!`,
-          timestamp: buildTimestamp(),
-        });
-        await sleep(900);
-      }
+      // Notify user with dashboard button if generated
+      appendMessage({
+        role: 'assistant',
+        content: dashboardGenerated 
+          ? `Dataset uploaded successfully! I've analyzed "${data.dataset_name || file.name}" and generated a professional dashboard for you. Click below to view your insights.`
+          : `Dataset uploaded successfully. Ask me anything about "${data.dataset_name || file.name}".`,
+        timestamp: buildTimestamp(),
+        showDashboardButton: dashboardGenerated,
+      }, { persist: false });
     } catch (error) {
-      let friendly;
-      if (error?.message?.includes('Connection lost while receiving analysis updates')) {
-        friendly = '🔌 Connection lost during analysis. Please check your network or try again.';
-      } else if (error?.message?.includes('Unable to create processing session')) {
-        friendly = '🛠️ Backend error: Unable to start analysis. Please try again later.';
-      } else if (error?.message?.includes('Pipeline failed')) {
-        friendly = '❌ Data processing failed. Please check your file format or try a different dataset.';
-      } else if (error?.message?.includes('Pipeline session ID missing')) {
-        friendly = '⚠️ Server did not return a session ID. Please try again.';
-      } else if (error?.name === 'TypeError' && error?.message?.includes('Failed to fetch')) {
-        friendly = '🌐 Network error: Unable to reach the server. Please check your internet connection.';
-      } else {
-        friendly = `⚠️ ${error?.message || 'Unknown error.'}`;
-      }
+      const friendly = `⚠️ ${error?.message || 'Upload failed.'}`;
       setUploadStatusMessage(friendly);
       appendMessage({
         role: 'assistant',
-        content: `Failed to process the uploaded file. ${friendly}`,
+        content: `Failed to upload the file. ${friendly}`,
         timestamp: buildTimestamp(),
-      });
-      await sleep(1100);
+      }, { persist: false });
     } finally {
       setIsUploading(false);
       setUploadStatusMessage('');
@@ -663,6 +528,14 @@ const ChatPage = () => {
               <div className="w-12 h-12 border-4 border-gray-700 border-t-white rounded-full animate-spin" aria-hidden="true" />
               <p className="mt-4 text-sm text-gray-300 text-center whitespace-pre-line">
                 {uploadStatusMessage || DEFAULT_STAGE_MESSAGE}
+              </p>
+            </div>
+          )}
+          {isGeneratingDashboard && !isUploading && (
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm">
+              <div className="w-12 h-12 border-4 border-gray-700 border-t-purple-500 rounded-full animate-spin" aria-hidden="true" />
+              <p className="mt-4 text-sm text-gray-300 text-center">
+                <span className="text-purple-400">📊</span> Generating AI-powered dashboard…
               </p>
             </div>
           )}
@@ -879,8 +752,156 @@ const ChatPage = () => {
               </div>
             </>
           )}
+
+          {/* Floating Dashboard Button when dashboard is available */}
+          {hasDashboard && !showDashboardModal && (
+            <button
+              onClick={() => setShowDashboardModal(true)}
+              className="fixed bottom-24 right-6 z-40 flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white rounded-full shadow-lg transition-all hover:scale-105"
+            >
+              <FiBarChart2 className="text-xl" />
+              <span className="font-medium">Dashboard</span>
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Dashboard Modal */}
+      {showDashboardModal && dashboardData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div className="relative w-full h-full max-w-7xl max-h-[95vh] m-4 bg-[#0d1117] rounded-2xl border border-gray-800 overflow-hidden flex flex-col">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 bg-gradient-to-r from-gray-900 to-[#0d1117]">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg">
+                  <FiBarChart2 className="text-white text-xl" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-white">
+                    {dashboardData.dashboard_title || 'Analytics Dashboard'}
+                  </h2>
+                  <p className="text-sm text-gray-400">
+                    {dashboardData.successful_charts || 0} charts generated • Powered by AI
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowDashboardModal(false)}
+                className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
+              >
+                <FiX className="text-2xl" />
+              </button>
+            </div>
+
+            {/* Modal Body - Scrollable Charts Grid */}
+            <div className="flex-1 overflow-y-auto p-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {dashboardData.charts?.map((chart, index) => (
+                  <div 
+                    key={chart.chart_id || index} 
+                    className="bg-gray-900/50 rounded-xl border border-gray-800 overflow-hidden hover:border-gray-700 transition-colors"
+                  >
+                    {/* Chart Header */}
+                    <div className="px-4 py-3 border-b border-gray-800 bg-gray-900/80">
+                      <h3 className="font-semibold text-white text-sm">
+                        {chart.title || `Chart ${index + 1}`}
+                      </h3>
+                      {chart.description && (
+                        <p className="text-xs text-gray-400 mt-1">{chart.description}</p>
+                      )}
+                    </div>
+                    
+                    {/* Chart Content */}
+                    <div className="p-4">
+                      {chart.figure ? (
+                        <Plot
+                          data={chart.figure.data || []}
+                          layout={{
+                            ...chart.figure.layout,
+                            autosize: true,
+                            paper_bgcolor: 'transparent',
+                            plot_bgcolor: 'transparent',
+                            font: { color: '#e2e8f0', size: 11 },
+                            margin: { t: 40, r: 20, b: 60, l: 60 },
+                            xaxis: { 
+                              ...chart.figure.layout?.xaxis,
+                              gridcolor: '#374151',
+                              tickfont: { color: '#9ca3af' }
+                            },
+                            yaxis: { 
+                              ...chart.figure.layout?.yaxis,
+                              gridcolor: '#374151',
+                              tickfont: { color: '#9ca3af' }
+                            },
+                          }}
+                          config={{ 
+                            displayModeBar: false, 
+                            responsive: true 
+                          }}
+                          style={{ width: '100%', height: '280px' }}
+                          useResizeHandler={true}
+                        />
+                      ) : chart.data ? (
+                        <Plot
+                          data={[{
+                            type: chart.chart_type === 'pie' ? 'pie' : 'bar',
+                            x: chart.chart_type === 'pie' ? undefined : (chart.data.x || chart.data.labels || []),
+                            y: chart.chart_type === 'pie' ? undefined : (chart.data.y || chart.data.values || []),
+                            labels: chart.chart_type === 'pie' ? (chart.data.labels || chart.data.x || []) : undefined,
+                            values: chart.chart_type === 'pie' ? (chart.data.values || chart.data.y || []) : undefined,
+                            marker: { 
+                              color: chart.chart_type === 'pie' 
+                                ? ['#3b82f6', '#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#ef4444']
+                                : '#3b82f6' 
+                            },
+                          }]}
+                          layout={{
+                            autosize: true,
+                            paper_bgcolor: 'transparent',
+                            plot_bgcolor: 'transparent',
+                            font: { color: '#e2e8f0', size: 11 },
+                            margin: { t: 40, r: 20, b: 60, l: 60 },
+                            xaxis: { gridcolor: '#374151', tickfont: { color: '#9ca3af' } },
+                            yaxis: { gridcolor: '#374151', tickfont: { color: '#9ca3af' } },
+                          }}
+                          config={{ displayModeBar: false, responsive: true }}
+                          style={{ width: '100%', height: '280px' }}
+                          useResizeHandler={true}
+                        />
+                      ) : (
+                        <div className="h-[280px] flex items-center justify-center text-gray-500">
+                          <p>No chart data available</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Chart Footer with metadata */}
+                    {(chart.sql_query || chart.row_count !== undefined) && (
+                      <div className="px-4 py-2 border-t border-gray-800 bg-gray-900/30">
+                        <div className="flex items-center justify-between text-xs text-gray-500">
+                          <span>{chart.chart_type?.toUpperCase()}</span>
+                          {chart.row_count !== undefined && (
+                            <span>{chart.row_count} data points</span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Empty State */}
+              {(!dashboardData.charts || dashboardData.charts.length === 0) && (
+                <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+                  <FiBarChart2 className="text-5xl mb-4 opacity-50" />
+                  <p className="text-lg font-medium">No charts generated</p>
+                  <p className="text-sm">Try uploading a dataset with more columns</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
