@@ -61,12 +61,21 @@ class DashboardService:
         if not metadata:
             metadata = self._extract_metadata(df)
         
-        # Generate dashboard
+        # Generate dashboard using SQL-based approach
+        # Pass session_id for direct database access
         result = self._agent.generate_dashboard(
             metadata=metadata,
-            data=df.to_dict(orient='records'),
+            session_id=session_id if session_id else None,
             user_prompt=user_prompt
         )
+        
+        # Fallback: if no session_id, use pandas data (legacy mode)
+        if not session_id and hasattr(self._agent, 'generate_dashboard_legacy'):
+            result = self._agent.generate_dashboard_legacy(
+                metadata=metadata,
+                data=df.to_dict(orient='records'),
+                user_prompt=user_prompt
+            )
         
         return result
     
