@@ -43,7 +43,6 @@ const ChatPage = () => {
   const [datasetId, setDatasetId] = useState(() => localStorage.getItem('datasetId'));
   const [sessionId, setSessionId] = useState(() => localStorage.getItem('chatSessionId'));
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
-  const [healthWarning, setHealthWarning] = useState('');
   const [isCheckingSession, setIsCheckingSession] = useState(true);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
@@ -84,11 +83,6 @@ const ChatPage = () => {
 
     return () => unsubscribe();
   }, [navigate]);
-
-  // Health check - removed (not needed)
-  useEffect(() => {
-    setHealthWarning('');
-  }, []);
 
   useEffect(() => {
     const loadHistory = async (activeSessionId) => {
@@ -142,9 +136,7 @@ const ChatPage = () => {
         setHasDashboard(false);
         setDatasetId(null);
         localStorage.removeItem('sessionId');
-        localStorage.removeItem('chatSessionId');
         localStorage.removeItem('sessionUserId');
-        localStorage.removeItem('chatSessionUserId');
         return false;
       }
     };
@@ -161,7 +153,6 @@ const ChatPage = () => {
           const newSessionId = data.session_id;
           
           localStorage.setItem('sessionId', newSessionId);
-          localStorage.setItem('chatSessionId', newSessionId);
           localStorage.setItem('sessionUserId', user.uid);
           setSessionId(newSessionId);
           setMessages([]);
@@ -189,8 +180,8 @@ const ChatPage = () => {
       setIsLoadingHistory(true);
 
       try {
-        const storedSessionId = localStorage.getItem('sessionId') || localStorage.getItem('chatSessionId');
-        const storedUserId = localStorage.getItem('sessionUserId') || localStorage.getItem('chatSessionUserId');
+        const storedSessionId = localStorage.getItem('sessionId');
+        const storedUserId = localStorage.getItem('sessionUserId');
         const storedDatasetId = localStorage.getItem('datasetId');
 
         if (storedSessionId && storedUserId === user.uid) {
@@ -209,7 +200,6 @@ const ChatPage = () => {
 
           // Stored session doesn't exist on server (404) -> clear and recreate
           localStorage.removeItem('sessionId');
-          localStorage.removeItem('chatSessionId');
           localStorage.removeItem('datasetId');
         }
 
@@ -578,7 +568,6 @@ const ChatPage = () => {
 
       setSessionId(newSessionId);
       localStorage.setItem('sessionId', newSessionId);
-      localStorage.setItem('chatSessionId', newSessionId);
 
       setUploadStatusMessage('📊 Generating dashboard…');
 

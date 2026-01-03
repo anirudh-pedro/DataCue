@@ -8,6 +8,8 @@ import re
 import uuid
 import json
 import smtplib
+import asyncio
+import functools
 import pandas as pd
 from io import StringIO
 from datetime import datetime
@@ -16,9 +18,11 @@ from email.mime.text import MIMEText
 from email.utils import formatdate
 from pydantic import BaseModel
 
-from fastapi import FastAPI, APIRouter, UploadFile, File, Depends, HTTPException, Query, Header
+from fastapi import FastAPI, APIRouter, UploadFile, File, Depends, HTTPException, Query, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy import Column, String, Integer, Text, DateTime, JSON, Index, create_engine, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
@@ -29,6 +33,37 @@ import firebase_admin
 from firebase_admin import credentials, auth as firebase_auth
 
 load_dotenv()
+
+# ============================================================================
+# RATE LIMITING CONFIGURATION
+# ============================================================================
+
+def get_rate_limit_key(request: Request) -> str:
+    """
+    Rate limit key resolver:
+    - Authenticated users: Firebase uid from header
+    - Unauthenticated: Client IP
+    """
+    authorization = request.headers.get("Authorization", "")
+    if authorization.startswith("Bearer "):
+        token = authorization.split("Bearer ")[1]
+        try:
+            # Decode token to get uid (lightweight verification)
+            decoded = firebase_auth.verify_id_token(token)
+            return f"user:{decoded['uid']}"
+        except:
+            pass  # Fall back to IP
+    
+    # Fallback to IP-based limiting
+    return f"ip:{get_remote_address(request)}"
+
+
+limiter = Limiter(
+    key_func=get_rate_limit_key,
+    default_limits=[],  # No global limits, applied per-endpoint
+    storage_uri="memory://",  # In-memory store (MVP)
+)
+
 
 # ============================================================================
 # DATABASE CONFIGURATION
@@ -139,6 +174,127 @@ class ChatMessage(Base):
         Index('idx_chatmessages_session_id', 'session_id'),
         Index('idx_chatmessages_created_at', 'created_at'),
     )
+
+
+# ============================================================================
+# LLM TIMEOUT & RETRY UTILITIES
+# ============================================================================
+
+class LLMTimeoutError(Exception):
+    """Raised when LLM call exceeds timeout"""
+    pass
+
+
+class LLMRetryableError(Exception):
+    """Raised when LLM call fails with retryable error (5xx, timeout)"""
+    pass
+
+
+def timeout_wrapper(timeout_seconds: int = 20):
+    """
+    Decorator to add timeout to async or sync LLM calls.
+    
+    Args:
+        timeout_seconds: Maximum time to wait (default 20s)
+    
+    Raises:
+        LLMTimeoutError: If call exceeds timeout
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            try:
+                return await asyncio.wait_for(
+                    func(*args, **kwargs),
+                    timeout=timeout_seconds
+                )
+            except asyncio.TimeoutError:
+                raise LLMTimeoutError(f"LLM call timed out after {timeout_seconds}s")
+        
+        @functools.wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            # For sync functions, run in thread pool with timeout
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(
+                    asyncio.wait_for(
+                        asyncio.to_thread(func, *args, **kwargs),
+                        timeout=timeout_seconds
+                    )
+                )
+            except asyncio.TimeoutError:
+                raise LLMTimeoutError(f"LLM call timed out after {timeout_seconds}s")
+            finally:
+                loop.close()
+        
+        # Return appropriate wrapper based on function type
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper
+        return sync_wrapper
+    
+    return decorator
+
+
+def retry_on_transient_errors(max_retries: int = 1, backoff_seconds: float = 1.0):
+    """
+    Decorator to retry LLM calls on transient failures.
+    
+    Args:
+        max_retries: Maximum retry attempts (default 1)
+        backoff_seconds: Initial backoff delay (default 1s)
+    
+    Retries on:
+        - LLMTimeoutError
+        - Exceptions with 5xx status codes
+        - Connection errors
+    
+    Does NOT retry on:
+        - 4xx client errors (invalid request)
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            
+            for attempt in range(max_retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                except LLMTimeoutError as e:
+                    last_exception = e
+                    if attempt < max_retries:
+                        wait_time = backoff_seconds * (2 ** attempt)
+                        print(f"⚠️ LLM timeout, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                        asyncio.run(asyncio.sleep(wait_time))
+                        continue
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    
+                    # Check for retryable errors (5xx, connection issues)
+                    is_retryable = (
+                        '500' in error_msg or '502' in error_msg or '503' in error_msg or '504' in error_msg or
+                        'timeout' in error_msg or 'connection' in error_msg or 'network' in error_msg
+                    )
+                    
+                    # Don't retry on client errors (4xx)
+                    is_client_error = any(code in error_msg for code in ['400', '401', '403', '404', '429'])
+                    
+                    if is_retryable and not is_client_error and attempt < max_retries:
+                        last_exception = e
+                        wait_time = backoff_seconds * (2 ** attempt)
+                        print(f"⚠️ Transient LLM error, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                        asyncio.run(asyncio.sleep(wait_time))
+                        continue
+                    
+                    # Non-retryable error, raise immediately
+                    raise
+            
+            # All retries exhausted
+            raise last_exception
+        
+        return wrapper
+    
+    return decorator
 
 
 # ============================================================================
@@ -1664,17 +1820,7 @@ def verify_otp_endpoint(payload: VerifyOtpRequest):
     return email_service.verify_otp(payload.email, payload.otp)
 
 
-# Simple navigation router (login -> dashboard redirect)
-nav_router = APIRouter(tags=["Navigation"])
-
-
-@nav_router.get("/login")
-def redirect_login_to_dashboard():
-    return RedirectResponse(url="/dashboard", status_code=307)
-
-
 app.include_router(email_router)
-app.include_router(nav_router)
 
 
 # =====================================================================
@@ -1948,19 +2094,16 @@ Return ONLY valid JSON in this format:
 """
         
         try:
-            completion = self.groq_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[
-                    {"role": "system", "content": "You are a SQL expert. Return only valid JSON."},
-                    {"role": "user", "content": prompt}
-                ],
+            result = self._call_groq_with_safeguards(
+                prompt=prompt,
+                system_message="You are a SQL expert. Return only valid JSON.",
                 temperature=0.3,
                 max_tokens=500,
-                response_format={"type": "json_object"}
+                response_format="json"
             )
             
-            result = json.loads(completion.choices[0].message.content)
-            sql_query = result.get("sql_query", "")
+            parsed = json.loads(result)
+            sql_query = parsed.get("sql_query", "")
             
             # Clean up SQL (remove markdown code blocks if present)
             sql_query = sql_query.replace("```sql", "").replace("```", "").strip()
@@ -2102,21 +2245,49 @@ Return ONLY the explanation text (no JSON, no formatting).
 """
         
         try:
-            completion = self.groq_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[
-                    {"role": "system", "content": "You are a data analyst. Provide clear, concise explanations."},
-                    {"role": "user", "content": prompt}
-                ],
+            explanation = self._call_groq_with_safeguards(
+                prompt=prompt,
+                system_message="You are a data analyst. Provide clear, concise explanations.",
                 temperature=0.5,
-                max_tokens=200
+                max_tokens=200,
+                response_format="text"
             )
-            
-            explanation = completion.choices[0].message.content.strip()
-            return explanation
+            return explanation.strip()
             
         except Exception as e:
             return f"Result returned successfully. (Explanation generation failed: {str(e)})"
+    
+    @retry_on_transient_errors(max_retries=1, backoff_seconds=1.0)
+    @timeout_wrapper(timeout_seconds=20)
+    def _call_groq_with_safeguards(self, prompt: str, system_message: str, temperature: float, max_tokens: int, response_format: str = "text") -> str:
+        """
+        Call Groq with timeout and retry protection.
+        
+        Args:
+            prompt: User prompt
+            system_message: System instruction
+            temperature: Sampling temperature
+            max_tokens: Maximum response tokens
+            response_format: "text" or "json"
+        
+        Returns:
+            LLM response text
+        
+        Raises:
+            LLMTimeoutError: If call exceeds 20s timeout
+            Exception: On non-retryable errors
+        """
+        completion = self.groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format={"type": "json_object"} if response_format == "json" else None
+        )
+        return completion.choices[0].message.content
 
     def _ensure_key_value_mentioned(self, question: str, result: Dict[str, Any], explanation: Optional[str]) -> Optional[str]:
         """Post-process explanation to ensure key dimension value (like a date) is explicitly mentioned when present."""
@@ -2392,8 +2563,10 @@ chat_router = APIRouter()
 
 
 @chat_router.post("/query", response_model=ChatResponse)
+@limiter.limit("30/minute")  # 30 requests per minute per user/IP
 async def chat_query(
-    request: ChatRequest,
+    request: Request,  # Required for rate limiting
+    chat_request: ChatRequest,
     uid: str = Depends(require_auth),  # Require authentication
     db: Session = Depends(get_db)
 ):
@@ -2402,6 +2575,9 @@ async def chat_query(
     
     Authentication: Required (401 if not authenticated)
     Authorization: Owner can only query their own datasets
+    Rate Limiting: 30 requests per minute per authenticated user (or IP if unauthenticated)
+    Timeouts: 20s for LLM calls
+    Retries: 1 retry on transient failures (5xx, timeout)
     
     Flow:
     1. Verify dataset ownership (403 if not owner)
@@ -2414,17 +2590,45 @@ async def chat_query(
     - "What is the total revenue?"
     - "Show top 10 customers by purchase amount"
     - "Average satisfaction by region"
+    
+    Errors:
+    - 401: Not authenticated
+    - 403: Not dataset owner
+    - 429: Rate limit exceeded
+    - 504: LLM timeout
     """
     # uid is guaranteed to be present (require_auth enforces it)
     owner_uid = uid
     
     # Authorization: Verify dataset ownership
-    check_dataset_ownership(request.dataset_id, owner_uid, db)
+    check_dataset_ownership(chat_request.dataset_id, owner_uid, db)
     
-    service = ChatService(db)
-    response = service.process_chat_query(request)
+    try:
+        service = ChatService(db)
+        response = service.process_chat_query(chat_request)
+        return response
     
-    return response
+    except LLMTimeoutError as e:
+        raise HTTPException(
+            status_code=504,
+            detail={
+                "error": "gateway_timeout",
+                "message": "The AI service took too long to respond. Please try again.",
+                "details": str(e)
+            }
+        )
+    
+    except Exception as e:
+        # Log error for debugging
+        print(f"❌ Chat query error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "internal_error",
+                "message": "An error occurred processing your query. Please try again.",
+                "details": str(e)
+            }
+        )
 
 
 app.include_router(session_router)
