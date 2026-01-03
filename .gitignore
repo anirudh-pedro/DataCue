@@ -10,6 +10,10 @@ Thumbs.db
 *.env
 *.env.*
 
+# Keep env templates in repo
+!.env.example
+!**/.env.example
+
 # Python cache & artifacts
 __pycache__/
 **/__pycache__/
@@ -56,3 +60,8 @@ backend/uploads/
 !.vscode/extensions.json
 .idea/
 *.code-workspace
+
+# Secrets / credentials
+**/*firebase-adminsdk*.json
+**/*service-account*.json
+**/*serviceAccount*.json

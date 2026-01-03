@@ -9,7 +9,7 @@ import { HiSparkles } from 'react-icons/hi2';
 import Plot from 'react-plotly.js';
 import { auth } from '../firebase';
 import sessionManager from '../utils/sessionManager';
-import { apiPost, apiPostForm, API_BASE_URL } from '../lib/api';
+import { apiGet, apiPost, apiPostForm, API_BASE_URL } from '../lib/api';
 const STAGE_LABELS = {
   upload_received: '📁 Upload received. Preparing analysis…',
   reading_csv: '🔍 Reading CSV and validating columns…',
@@ -38,6 +38,7 @@ const ChatPage = () => {
   const [dashboardData, setDashboardData] = useState(null);
   const [showDashboardModal, setShowDashboardModal] = useState(false);
   const [isGeneratingDashboard, setIsGeneratingDashboard] = useState(false);
+  const [dashboardError, setDashboardError] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [datasetId, setDatasetId] = useState(() => localStorage.getItem('datasetId'));
   const [sessionId, setSessionId] = useState(() => localStorage.getItem('chatSessionId'));
@@ -84,46 +85,62 @@ const ChatPage = () => {
     return () => unsubscribe();
   }, [navigate]);
 
-  // Health check monitoring
+  // Health check - removed (not needed)
   useEffect(() => {
-    const checkHealth = async () => {
-      try {
-        const response = await apiGet('/health', { auth: false }); // Health check doesn't need auth
-        if (!response.ok) {
-          setHealthWarning('⚠️ Backend service is experiencing issues');
-          return;
-        }
-        const health = await response.json();
-        if (health.status === 'degraded') {
-          if (health.services?.mongodb === 'unreachable') {
-            setHealthWarning('⚠️ Database connection lost - chat history may not save');
-          } else {
-            setHealthWarning('⚠️ Some services are degraded');
-          }
-        } else {
-          setHealthWarning('');
-        }
-      } catch (error) {
-        setHealthWarning('⚠️ Unable to reach backend service');
-      }
-    };
-
-    checkHealth();
-    const interval = setInterval(checkHealth, 30000); // Check every 30 seconds
-    return () => clearInterval(interval);
+    setHealthWarning('');
   }, []);
 
   useEffect(() => {
     const loadHistory = async (activeSessionId) => {
       try {
-        // No persisted history in new backend; just clear and continue
-        setMessages([]);
-        setHasDashboard(false);
-        return true;
+        // Fetch messages from backend
+        const response = await apiGet(`/chat/sessions/${activeSessionId}/messages`);
+        
+        if (response.ok) {
+          const data = await response.json();
+          const messages = data.messages || [];
+          
+          // Reconstruct message format with showDashboardButton from metadata
+          const reconstructedMessages = messages.map(msg => ({
+            ...msg,
+            showDashboardButton: msg.metadata?.has_dashboard || false
+          }));
+          
+          setMessages(reconstructedMessages);
+
+          // Restore persisted dashboard payload if present
+          const persistedDashboard = messages.find(m => m?.metadata?.dashboard_data)?.metadata?.dashboard_data;
+          if (persistedDashboard) {
+            setDashboardData(persistedDashboard);
+            setHasDashboard(true);
+          }
+          
+          // Restore dataset_id if present
+          if (data.dataset_id) {
+            setDatasetId(data.dataset_id);
+            localStorage.setItem('datasetId', data.dataset_id);
+          }
+          
+          // Check if this session has a dashboard
+          const hasDashboardMessage = messages.some(m => m.metadata?.has_dashboard);
+          if (hasDashboardMessage) {
+            setHasDashboard(true);
+          }
+          
+          return true;
+        } else {
+          // Session not found or error - start fresh
+          console.log('Session not found, starting new session');
+          setMessages([]);
+          setHasDashboard(false);
+          setDatasetId(null);
+          return false;
+        }
       } catch (error) {
         console.error('Failed to load chat history:', error);
         setMessages([]);
         setHasDashboard(false);
+        setDatasetId(null);
         localStorage.removeItem('sessionId');
         localStorage.removeItem('chatSessionId');
         localStorage.removeItem('sessionUserId');
@@ -133,13 +150,33 @@ const ChatPage = () => {
     };
 
     const createNewSession = async (user) => {
-      const newSessionId = crypto.randomUUID();
-      localStorage.setItem('sessionId', newSessionId);
-      localStorage.setItem('chatSessionId', newSessionId); // Backward compatibility
-      localStorage.setItem('sessionUserId', user.uid);
-      setSessionId(newSessionId);
-      setMessages([]);
-      setHasDashboard(false);
+      try {
+        // Create session in backend
+        const response = await apiPost('/chat/sessions', {
+          dataset_id: datasetId || null
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          const newSessionId = data.session_id;
+          
+          localStorage.setItem('sessionId', newSessionId);
+          localStorage.setItem('chatSessionId', newSessionId);
+          localStorage.setItem('sessionUserId', user.uid);
+          setSessionId(newSessionId);
+          setMessages([]);
+          setHasDashboard(false);
+        } else {
+          const text = await response.text().catch(() => '');
+          throw new Error(text || `Failed to create chat session (${response.status})`);
+        }
+      } catch (error) {
+        console.error('Failed to create session in backend:', error);
+        // Do NOT create a local-only session id (it will 404 on reload).
+        setSessionId(null);
+        setMessages([]);
+        setHasDashboard(false);
+      }
     };
 
     const initialiseSession = async (user) => {
@@ -154,17 +191,26 @@ const ChatPage = () => {
       try {
         const storedSessionId = localStorage.getItem('sessionId') || localStorage.getItem('chatSessionId');
         const storedUserId = localStorage.getItem('sessionUserId') || localStorage.getItem('chatSessionUserId');
+        const storedDatasetId = localStorage.getItem('datasetId');
 
         if (storedSessionId && storedUserId === user.uid) {
+          setSessionId(storedSessionId);
+          if (storedDatasetId) {
+            setDatasetId(storedDatasetId);
+          }
           const loaded = await loadHistory(storedSessionId);
           if (loaded) {
-            setSessionId(storedSessionId);
             // Update to new key format (keep both for compatibility)
             localStorage.setItem('sessionId', storedSessionId);
             localStorage.setItem('chatSessionId', storedSessionId);
             localStorage.setItem('sessionUserId', user.uid);
             return;
           }
+
+          // Stored session doesn't exist on server (404) -> clear and recreate
+          localStorage.removeItem('sessionId');
+          localStorage.removeItem('chatSessionId');
+          localStorage.removeItem('datasetId');
         }
 
         await createNewSession(user);
@@ -195,8 +241,31 @@ const ChatPage = () => {
   const appendMessage = (message, options = {}) => {
     const messageWithId = message.id ? message : { ...message, id: generateMessageId() };
     setMessages((prev) => [...prev, messageWithId]);
-    // Note: Messages are stored in React state only (no backend persistence)
+    
+    // Persist to backend if session exists and not explicitly disabled
+    if (sessionId && options.persist !== false) {
+      persistMessage(messageWithId);
+    }
+    
     return messageWithId;
+  };
+
+  const persistMessage = async (message) => {
+    if (!sessionId) return;
+    
+    try {
+      await apiPost(`/chat/sessions/${sessionId}/messages`, {
+        id: message.id,
+        role: message.role,
+        content: message.content,
+        chart: message.chart,
+        metadata: message.metadata,
+        timestamp: message.timestamp,
+      });
+    } catch (error) {
+      console.error('Failed to persist message:', error);
+      // Non-critical error, don't disrupt user flow
+    }
   };
 
   const buildTimestamp = () => new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
@@ -250,14 +319,29 @@ const ChatPage = () => {
     return title;
   };
 
-  const updateSessionTitle = (title) => {
-    // Store title locally only (no backend persistence)
+  const updateSessionTitle = async (title) => {
     if (!sessionId) return;
-    const stored = JSON.parse(localStorage.getItem('chatSessions') || '[]');
-    const idx = stored.findIndex(s => s.id === sessionId);
-    if (idx >= 0) {
-      stored[idx].title = title;
-      localStorage.setItem('chatSessions', JSON.stringify(stored));
+    
+    try {
+      // Update title in backend (PATCH, not POST)
+      await fetch(`${API_BASE_URL}/chat/sessions/${sessionId}/title`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${await auth.currentUser?.getIdToken()}`
+        },
+        body: JSON.stringify({ title })
+      });
+      
+      // Also update in local storage for immediate UI feedback
+      const stored = JSON.parse(localStorage.getItem('chatSessions') || '[]');
+      const idx = stored.findIndex(s => s.id === sessionId);
+      if (idx >= 0) {
+        stored[idx].title = title;
+        localStorage.setItem('chatSessions', JSON.stringify(stored));
+      }
+    } catch (error) {
+      console.error('Failed to update session title:', error);
     }
   };
 
@@ -295,11 +379,13 @@ const ChatPage = () => {
 
     setIsTyping(true);
     try {
+      const qLower = userContent.toLowerCase();
+      const wantsRawRows = /\b(list|show|display)\b/.test(qLower) && /\brows?\b/.test(qLower);
       const response = await apiPost('/chat/query', {
         dataset_id: datasetId,
         session_id: sessionId,
         question: userContent,
-        include_explanation: true,
+        include_explanation: !wantsRawRows,
       });
 
       if (!response.ok) {
@@ -333,18 +419,21 @@ const ChatPage = () => {
         }
       }
       if (textParts.length === 0 && payload.message) textParts.push(payload.message);
+      
       const assistantMessage = {
         role: 'assistant',
         content: textParts.join('\n\n') || 'I received a response.',
         timestamp: buildTimestamp(),
+        chart: payload.chart || null, // Include chart data if present
+        metadata: payload.metadata || null, // Include metadata if present
       };
-      appendMessage(assistantMessage, { persist: false });
+      appendMessage(assistantMessage); // Persist by default
     } catch (error) {
       appendMessage({
         role: 'assistant',
         content: `I could not reach the analytics service. ${error.message || 'Unknown error.'}`,
         timestamp: buildTimestamp(),
-      });
+      }); // Persist error messages too
     } finally {
       setIsTyping(false);
     }
@@ -375,17 +464,45 @@ const ChatPage = () => {
   const handleViewDashboard = () => {
     if (dashboardData) {
       setShowDashboardModal(true);
-    } else {
-      appendMessage({
-        role: 'assistant',
-        content: 'No dashboard available yet. Upload a CSV file to generate one automatically.',
-        timestamp: buildTimestamp(),
-      }, { persist: false });
+      return;
     }
+
+    // Try to restore dashboard from persisted messages (old chat revisit)
+    const persistedDashboard = messages.find(m => m?.metadata?.dashboard_data)?.metadata?.dashboard_data;
+    if (persistedDashboard) {
+      setDashboardData(persistedDashboard);
+      setHasDashboard(true);
+      setShowDashboardModal(true);
+      return;
+    }
+
+    // As a last resort, regenerate if we still have dataset/session
+    if (datasetId && sessionId) {
+      (async () => {
+        const data = await generateDashboard(datasetId, sessionId);
+        if (data) {
+          setShowDashboardModal(true);
+          return;
+        }
+        appendMessage({
+          role: 'assistant',
+          content: 'No dashboard available yet. Upload a CSV file to generate one automatically.',
+          timestamp: buildTimestamp(),
+        }, { persist: false });
+      })();
+      return;
+    }
+
+    appendMessage({
+      role: 'assistant',
+      content: 'No dashboard available yet. Upload a CSV file to generate one automatically.',
+      timestamp: buildTimestamp(),
+    }, { persist: false });
   };
 
   const generateDashboard = async (datasetIdToUse, sessionIdToUse) => {
     setIsGeneratingDashboard(true);
+    setDashboardError(null); // Clear previous errors
     try {
       const dashboardResponse = await apiPost(
         `/dashboard/generate-from-schema?dataset_id=${encodeURIComponent(datasetIdToUse)}&session_id=${encodeURIComponent(sessionIdToUse)}`
@@ -396,13 +513,21 @@ const ChatPage = () => {
         if (dashboardPayload.success && dashboardPayload.data) {
           setDashboardData(dashboardPayload.data);
           setHasDashboard(true);
-          return true;
+          setDashboardError(null);
+          return dashboardPayload.data;
+        } else {
+          setDashboardError(dashboardPayload.message || 'Dashboard generation returned no data');
+          return null;
         }
+      } else {
+        const errorData = await dashboardResponse.json().catch(() => ({}));
+        setDashboardError(errorData.detail || `Dashboard generation failed (${dashboardResponse.status})`);
+        return null;
       }
-      return false;
     } catch (error) {
       console.error('Dashboard generation failed:', error);
-      return false;
+      setDashboardError(error.message || 'Network error during dashboard generation');
+      return null;
     } finally {
       setIsGeneratingDashboard(false);
     }
@@ -429,7 +554,7 @@ const ChatPage = () => {
         ? `/ingestion/upload?session_id=${encodeURIComponent(sessionId)}`
         : '/ingestion/upload';
 
-      const uploadResponse = await apiPostForm(endpoint, formData, { auth: false });
+      const uploadResponse = await apiPostForm(endpoint, formData);
       if (!uploadResponse.ok) {
         const text = await uploadResponse.text();
         throw new Error(text || 'Upload failed');
@@ -438,10 +563,14 @@ const ChatPage = () => {
       const payload = await uploadResponse.json();
       const data = payload?.data || {};
       const newDatasetId = data.dataset_id;
-      const newSessionId = data.session_id || sessionId || crypto.randomUUID();
+      const newSessionId = data.session_id || sessionId;
 
       if (!newDatasetId) {
         throw new Error('Dataset ID missing from upload response');
+      }
+
+      if (!newSessionId) {
+        throw new Error('Session ID missing from upload response');
       }
 
       setDatasetId(newDatasetId);
@@ -454,7 +583,8 @@ const ChatPage = () => {
       setUploadStatusMessage('📊 Generating dashboard…');
 
       // Generate dashboard automatically
-      const dashboardGenerated = await generateDashboard(newDatasetId, newSessionId);
+      const generatedDashboardData = await generateDashboard(newDatasetId, newSessionId);
+      const dashboardGenerated = Boolean(generatedDashboardData);
       
       setUploadStatusMessage('✅ Upload complete. You can now ask questions about your data.');
 
@@ -466,7 +596,11 @@ const ChatPage = () => {
           : `Dataset uploaded successfully. Ask me anything about "${data.dataset_name || file.name}".`,
         timestamp: buildTimestamp(),
         showDashboardButton: dashboardGenerated,
-      }, { persist: false });
+        metadata: {
+          has_dashboard: dashboardGenerated,
+          dashboard_data: generatedDashboardData || null,
+        }
+      });
     } catch (error) {
       const friendly = `⚠️ ${error?.message || 'Upload failed.'}`;
       setUploadStatusMessage(friendly);
@@ -890,12 +1024,45 @@ const ChatPage = () => {
                 ))}
               </div>
 
-              {/* Empty State */}
+              {/* Empty State with Retry */}
               {(!dashboardData.charts || dashboardData.charts.length === 0) && (
                 <div className="flex flex-col items-center justify-center py-16 text-gray-400">
                   <FiBarChart2 className="text-5xl mb-4 opacity-50" />
-                  <p className="text-lg font-medium">No charts generated</p>
-                  <p className="text-sm">Try uploading a dataset with more columns</p>
+                  <p className="text-lg font-medium mb-2">No charts generated</p>
+                  {dashboardError ? (
+                    <>
+                      <p className="text-sm text-red-400 mb-4">{dashboardError}</p>
+                      <button
+                        onClick={async () => {
+                          setDashboardError(null);
+                          setIsGeneratingDashboard(true);
+                          try {
+                            const response = await apiPost(
+                              `/dashboard/generate-from-schema?dataset_id=${datasetId}&session_id=${sessionId}`
+                            );
+                            if (response.ok) {
+                              const data = await response.json();
+                              setDashboardData(data);
+                              setHasDashboard(true);
+                            } else {
+                              const error = await response.json();
+                              setDashboardError(error.detail || 'Dashboard generation failed');
+                            }
+                          } catch (err) {
+                            setDashboardError('Failed to generate dashboard. Please try again.');
+                          } finally {
+                            setIsGeneratingDashboard(false);
+                          }
+                        }}
+                        className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center gap-2"
+                        disabled={isGeneratingDashboard}
+                      >
+                        {isGeneratingDashboard ? 'Retrying...' : 'Retry Dashboard Generation'}
+                      </button>
+                    </>
+                  ) : (
+                    <p className="text-sm">Try uploading a dataset with more columns</p>
+                  )}
                 </div>
               )}
             </div>

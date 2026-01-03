@@ -32,8 +32,11 @@ Complete AI-powered data analytics platform with React frontend and FastAPI back
    uvicorn main:app --reload --host 0.0.0.0 --port 8000
    ```
 
-   Backend will be available at: `http://localhost:8000`
-   API docs at: `http://localhost:8000/docs`
+
+   Backend will be available at: `http://localhost:8001`
+   API docs at: `http://localhost:8001/docs`
+
+   cd "C:\Users\HP\Desktop\machine learning\DataCue\backend_agents"; & "C:\Users\HP\Desktop\machine learning\DataCue\.venv\Scripts\python.exe" -m uvicorn main:app --reload --host 0.0.0.0 --port 8001
 
 ### Frontend Setup
 

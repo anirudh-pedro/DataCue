@@ -3,9 +3,6 @@ import { AuthProvider } from './context/AuthContext';
 import { ChatProvider } from './context/ChatContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import ChatPage from './pages/ChatPage';
-import Dashboard from './pages/Dashboard';
-import Analytics from './pages/Analytics';
-import AnalyticsDashboard from './pages/AnalyticsDashboard';
 import Login from './pages/Login';
 import Profile from './pages/Profile';
 import VerifyOtp from './pages/VerifyOtp';
@@ -22,9 +19,6 @@ function App() {
                 <Route path="/login" element={<Login />} />
                 <Route path="/verify-otp" element={<VerifyOtp />} />
                 <Route path="/chat" element={<ChatPage />} />
-                <Route path="/dashboard" element={<Dashboard />} />
-                <Route path="/analytics" element={<AnalyticsDashboard />} />
-                <Route path="/analytics-old" element={<Analytics />} />
                 <Route path="/profile" element={<Profile />} />
               </Routes>
             </div>
