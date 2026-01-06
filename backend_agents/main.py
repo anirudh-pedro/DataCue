@@ -213,12 +213,9 @@ def timeout_wrapper(timeout_seconds: int = 20):
         
         @functools.wraps(func)
         def sync_wrapper(*args, **kwargs):
-            # For sync functions, run in thread pool with timeout
             try:
-                # Try to get the running event loop
                 loop = asyncio.get_running_loop()
             except RuntimeError:
-                # No running loop, create a new one
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 try:
