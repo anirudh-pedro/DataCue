@@ -44,6 +44,7 @@ const ChatPage = () => {
   const [sessionId, setSessionId] = useState(() => localStorage.getItem('chatSessionId'));
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isCheckingSession, setIsCheckingSession] = useState(true);
+  const [healthWarning, setHealthWarning] = useState(null);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);

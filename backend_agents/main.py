@@ -214,19 +214,28 @@ def timeout_wrapper(timeout_seconds: int = 20):
         @functools.wraps(func)
         def sync_wrapper(*args, **kwargs):
             # For sync functions, run in thread pool with timeout
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
             try:
-                return loop.run_until_complete(
-                    asyncio.wait_for(
-                        asyncio.to_thread(func, *args, **kwargs),
-                        timeout=timeout_seconds
+                # Try to get the running event loop
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # No running loop, create a new one
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    return loop.run_until_complete(
+                        asyncio.wait_for(
+                            asyncio.to_thread(func, *args, **kwargs),
+                            timeout=timeout_seconds
+                        )
                     )
-                )
-            except asyncio.TimeoutError:
-                raise LLMTimeoutError(f"LLM call timed out after {timeout_seconds}s")
-            finally:
-                loop.close()
+                except asyncio.TimeoutError:
+                    raise LLMTimeoutError(f"LLM call timed out after {timeout_seconds}s")
+                finally:
+                    loop.close()
+            else:
+                # Already in an async context, just call the function directly
+                # (timeout will be handled at a higher level)
+                return func(*args, **kwargs)
         
         # Return appropriate wrapper based on function type
         if asyncio.iscoroutinefunction(func):
@@ -823,8 +832,8 @@ def call_llm_with_fallback(prompt: str, system_message: str = "You are a helpful
     if gemini_api_key:
         try:
             genai.configure(api_key=gemini_api_key)
-            # Use gemini-1.5-pro which is stable and available
-            model = genai.GenerativeModel('gemini-1.5-pro')
+            # Use gemini-1.5-flash which is available in the stable API
+            model = genai.GenerativeModel('gemini-1.5-flash')
             
             # Combine system message and prompt
             full_prompt = f"{system_message}\n\n{prompt}"
@@ -2605,7 +2614,8 @@ async def chat_query(
     
     try:
         service = ChatService(db)
-        response = service.process_chat_query(chat_request)
+        # Run sync method in thread pool to avoid blocking async event loop
+        response = await asyncio.to_thread(service.process_chat_query, chat_request)
         return response
     
     except LLMTimeoutError as e:
