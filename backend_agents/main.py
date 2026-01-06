@@ -230,11 +230,9 @@ def timeout_wrapper(timeout_seconds: int = 20):
                 finally:
                     loop.close()
             else:
-                # Already in an async context, just call the function directly
-                # (timeout will be handled at a higher level)
+                
                 return func(*args, **kwargs)
         
-        # Return appropriate wrapper based on function type
         if asyncio.iscoroutinefunction(func):
             return async_wrapper
         return sync_wrapper
