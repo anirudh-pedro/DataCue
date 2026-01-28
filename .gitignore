@@ -4,11 +4,12 @@ Thumbs.db
 *.swp
 *.swo
 
-# Environment variables
+# Environment variables (CRITICAL - NEVER COMMIT)
 .env
 .env.*
 *.env
-*.env.*
+backend_agents/.env
+client/.env
 
 # Keep env templates in repo
 !.env.example
@@ -61,7 +62,24 @@ backend/uploads/
 .idea/
 *.code-workspace
 
-# Secrets / credentials
+# Zencoder / AI tools
+.zencoder/
+.zenflow/
+.cursor/
+.aider/
+
+# Build artifacts
+build/
+*.egg-info/
+.eggs/
+
+# Test files
+test_*.py
+*_test.py
+
+# Firebase service account keys (CRITICAL - NEVER COMMIT)
 **/*firebase-adminsdk*.json
 **/*service-account*.json
 **/*serviceAccount*.json
+**/datacue-*-firebase-*.json
+datacue-50971-firebase-adminsdk-fbsvc-6903fdc3d2.json
