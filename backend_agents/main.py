@@ -24,8 +24,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import Column, String, Integer, Text, DateTime, JSON, Index, create_engine, text
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from dotenv import load_dotenv
 from groq import Groq
 import google.generativeai as genai
@@ -307,33 +306,35 @@ def retry_on_transient_errors(max_retries: int = 1, backoff_seconds: float = 1.0
 
 # Initialize Firebase Admin SDK
 try:
-    firebase_project_id = os.getenv("FIREBASE_PROJECT_ID")
-    
-    # Option 1: Use service account JSON file (easiest for development)
-    service_account_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH")
-    if service_account_path and os.path.exists(service_account_path):
-        cred = credentials.Certificate(service_account_path)
-        firebase_admin.initialize_app(cred)
-        print("✓ Firebase Admin initialized from JSON file")
-    
-    # Option 2: Use environment variables (better for production)
-    elif firebase_project_id and os.getenv("FIREBASE_PRIVATE_KEY"):
-        cred = credentials.Certificate({
-            "type": "service_account",
-            "project_id": firebase_project_id,
-            "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID", ""),
-            "private_key": os.getenv("FIREBASE_PRIVATE_KEY", "").replace("\\n", "\n"),
-            "client_email": os.getenv("FIREBASE_CLIENT_EMAIL", ""),
-            "client_id": os.getenv("FIREBASE_CLIENT_ID", ""),
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-        })
-        firebase_admin.initialize_app(cred)
-        print("✓ Firebase Admin initialized from environment variables")
-    else:
-        print("⚠️ Firebase Admin not configured - auth will be disabled")
-        print("   Download service account JSON from Firebase Console or set environment variables")
+    # Check if Firebase is already initialized to prevent duplicate initialization
+    if not firebase_admin._apps:
+        firebase_project_id = os.getenv("FIREBASE_PROJECT_ID")
+        
+        # Option 1: Use service account JSON file (easiest for development)
+        service_account_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH")
+        if service_account_path and os.path.exists(service_account_path):
+            cred = credentials.Certificate(service_account_path)
+            firebase_admin.initialize_app(cred)
+            print("✓ Firebase Admin initialized from JSON file")
+        
+        # Option 2: Use environment variables (better for production)
+        elif firebase_project_id and os.getenv("FIREBASE_PRIVATE_KEY"):
+            cred = credentials.Certificate({
+                "type": "service_account",
+                "project_id": firebase_project_id,
+                "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID", ""),
+                "private_key": os.getenv("FIREBASE_PRIVATE_KEY", "").replace("\\n", "\n"),
+                "client_email": os.getenv("FIREBASE_CLIENT_EMAIL", ""),
+                "client_id": os.getenv("FIREBASE_CLIENT_ID", ""),
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            })
+            firebase_admin.initialize_app(cred)
+            print("✓ Firebase Admin initialized from environment variables")
+        else:
+            print("⚠️ Firebase Admin not configured - auth will be disabled")
+            print("   Download service account JSON from Firebase Console or set environment variables")
 except Exception as e:
     print(f"⚠️ Firebase Admin init failed (auth will be disabled): {e}")
 
@@ -2640,14 +2641,23 @@ app.include_router(session_router)
 app.include_router(chat_router, prefix="/chat", tags=["Phase 3: Chat With CSV"])
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize database on startup"""
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan event handler for startup and shutdown"""
+    # Startup
     print("🚀 Starting DataCue Backend - Phases 1, 2, 3")
     print("📊 Initializing PostgreSQL database...")
     Base.metadata.create_all(bind=engine)
     print("✓ Database initialized")
     print("✓ Server ready")
+    yield
+    # Shutdown (if needed in future)
+    pass
+
+# Update app initialization
+app.router.lifespan_context = lifespan
 
 
 @app.get("/")
