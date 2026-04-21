@@ -920,7 +920,9 @@ const ChatPage = () => {
             {/* Modal Body - Scrollable Charts Grid */}
             <div className="flex-1 overflow-y-auto p-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {dashboardData.charts?.map((chart, index) => (
+                {(dashboardData.charts || [])
+                  .filter((chart) => chart?.status === 'success')
+                  .map((chart, index) => (
                   <div 
                     key={chart.chart_id || index} 
                     className="bg-gray-900/50 rounded-xl border border-gray-800 overflow-hidden hover:border-gray-700 transition-colors"
@@ -967,22 +969,94 @@ const ChatPage = () => {
                         />
                       ) : chart.data ? (
                         <Plot
-                          data={[{
-                            type: chart.chart_type === 'pie' ? 'pie' : 'bar',
-                            x: chart.chart_type === 'pie' ? undefined : (chart.data.x || chart.data.labels || []),
-                            y: chart.chart_type === 'pie' ? undefined : (chart.data.y || chart.data.values || []),
-                            labels: chart.chart_type === 'pie' ? (chart.data.labels || chart.data.x || []) : undefined,
-                            values: chart.chart_type === 'pie' ? (chart.data.values || chart.data.y || []) : undefined,
-                            marker: { 
-                              color: chart.chart_type === 'pie' 
-                                ? ['#3b82f6', '#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#ef4444']
-                                : '#3b82f6' 
-                            },
-                          }]}
+                          data={(() => {
+                            const chartType = String(chart.chart_type || '').toLowerCase();
+                            const x = chart.data.x || chart.data.labels || [];
+                            const y = chart.data.y || chart.data.values || [];
+                            const series = chart.data.series || {};
+
+                            if (chartType === 'pie') {
+                              return [{
+                                type: 'pie',
+                                labels: chart.data.labels || chart.data.x || [],
+                                values: chart.data.values || chart.data.y || [],
+                                marker: {
+                                  colors: ['#3b82f6', '#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#ef4444']
+                                }
+                              }];
+                            }
+
+                            if (chartType === 'scatter') {
+                              return [{
+                                type: 'scatter',
+                                mode: 'markers',
+                                x,
+                                y,
+                                marker: { color: '#3b82f6', size: 8, opacity: 0.8 }
+                              }];
+                            }
+
+                            if (chartType === 'line' || chartType === 'area') {
+                              if (Object.keys(series).length > 0) {
+                                return Object.entries(series).map(([name, values], idx) => ({
+                                  type: 'scatter',
+                                  mode: 'lines',
+                                  name,
+                                  x,
+                                  y: values,
+                                  fill: chartType === 'area' ? 'tozeroy' : undefined,
+                                  line: { width: 2 }
+                                }));
+                              }
+                              return [{
+                                type: 'scatter',
+                                mode: 'lines',
+                                x,
+                                y,
+                                fill: chartType === 'area' ? 'tozeroy' : undefined,
+                                line: { color: '#3b82f6', width: 2 }
+                              }];
+                            }
+
+                            if (chartType === 'histogram') {
+                              return [{
+                                type: 'histogram',
+                                x: chart.data.x || chart.data.values || [],
+                                marker: { color: '#3b82f6' }
+                              }];
+                            }
+
+                            if (chartType === 'heatmap') {
+                              return [{
+                                type: 'heatmap',
+                                z: chart.data.z || [],
+                                x: chart.data.x,
+                                y: chart.data.y,
+                                colorscale: 'Blues'
+                              }];
+                            }
+
+                            if (Object.keys(series).length > 0) {
+                              return Object.entries(series).map(([name, values], idx) => ({
+                                type: 'bar',
+                                name,
+                                x: chart.data.labels || x,
+                                y: values,
+                              }));
+                            }
+
+                            return [{
+                              type: 'bar',
+                              x,
+                              y,
+                              marker: { color: '#3b82f6' }
+                            }];
+                          })()}
                           layout={{
                             autosize: true,
                             paper_bgcolor: 'transparent',
                             plot_bgcolor: 'transparent',
+                            barmode: chart.data?.series ? 'group' : undefined,
                             font: { color: '#e2e8f0', size: 11 },
                             margin: { t: 40, r: 20, b: 60, l: 60 },
                             xaxis: { gridcolor: '#374151', tickfont: { color: '#9ca3af' } },

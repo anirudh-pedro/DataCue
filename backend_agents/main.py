@@ -1457,6 +1457,23 @@ Return JSON in this exact shape:
             
             # Step 2: Execute query
             data = self.execute_query(sql_query)
+
+            # Normalize special chart payloads for frontend rendering.
+            if chart.chart_type == "scatter" and isinstance(data, dict):
+                labels = data.get("labels") or []
+                values = data.get("values") or []
+                if labels and values:
+                    x_vals = []
+                    y_vals = []
+                    for x_raw, y_raw in zip(labels, values):
+                        try:
+                            x_num = float(x_raw)
+                            y_num = float(y_raw)
+                        except (TypeError, ValueError):
+                            continue
+                        x_vals.append(x_num)
+                        y_vals.append(y_num)
+                    data = {"x": x_vals, "y": y_vals}
             
             # Step 3: Format response
             return {
@@ -1465,6 +1482,11 @@ Return JSON in this exact shape:
                 "type": chart.chart_type,
                 "description": chart.description,
                 "data": data,
+                "row_count": (
+                    len(data.get("x", [])) if isinstance(data, dict) and "x" in data
+                    else len(data.get("labels", [])) if isinstance(data, dict) and "labels" in data
+                    else None
+                ),
                 "sql_query": sql_query,  # For debugging
                 "status": "success"
             }
