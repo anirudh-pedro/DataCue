@@ -881,15 +881,15 @@ class EmailService:
     """Simple OTP email service using SMTP (Gmail app password recommended)."""
 
     def __init__(self):
-        self.email_user = os.getenv("EMAIL_USER")
-        self.email_password = os.getenv("EMAIL_APP_PASSWORD")
+        self.email_user = os.getenv("SMTP_USERNAME") or os.getenv("EMAIL_USER")
+        self.email_password = os.getenv("SMTP_PASSWORD") or os.getenv("EMAIL_APP_PASSWORD")
         self.otp_expiry_seconds = int(os.getenv("OTP_EXPIRY_SECONDS", "300"))
         self.max_otp_attempts = int(os.getenv("OTP_MAX_ATTEMPTS", "3"))
         self.rate_limit_window_ms = int(os.getenv("OTP_RATE_WINDOW_MS", "60000"))
         self.max_requests_per_window = int(os.getenv("OTP_MAX_REQUESTS_PER_WINDOW", "5"))
 
         if not self.email_user or not self.email_password:
-            print("⚠️  EMAIL_USER or EMAIL_APP_PASSWORD not configured. OTP emails will fail.")
+            print("⚠️  SMTP_USERNAME/SMTP_PASSWORD (or EMAIL_USER/EMAIL_APP_PASSWORD) not configured. OTP emails will fail.")
 
         # In-memory stores
         self.otp_store: Dict[str, Dict[str, Any]] = {}
